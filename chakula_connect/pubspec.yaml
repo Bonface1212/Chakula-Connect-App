@@ -1,0 +1,44 @@
+name: chakula_connect
+description: A mobile app to connect surplus food donors with recipients.
+version: 1.0.0+1
+publish_to: 'none'
+
+environment:
+  sdk: ^3.8.1
+
+dependencies:
+  intl_phone_number_input: ^0.7.3+1
+  flutter:
+    sdk: flutter
+
+  # Firebase core services
+  firebase_core: ^2.27.0
+  firebase_auth: ^4.20.0
+  cloud_firestore: ^4.9.0
+  firebase_storage: ^11.5.0
+
+  # UI and Utility
+  image_picker: ^1.1.0
+  provider: ^6.1.1
+  fluttertoast: ^8.2.4
+  cupertino_icons: ^1.0.8
+
+  # Location and Maps
+  location: ^7.0.0
+  google_maps_flutter: ^2.6.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/chakula connect.png
+
+  # fonts:
+  #   - family: CustomFont
+  #     fonts:
+  #       - asset: fonts/CustomFont-Regular.ttf

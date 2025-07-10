@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "591799144347",
+    "project_id": "chakulaconnect",
+    "storage_bucket": "chakulaconnect.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:591799144347:android:ad168b76f6f700452bdb3e",
+        "android_client_info": {
+          "package_name": "com.chakulaconnect.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBBh0NTt3Wwy4Z9-m16Jx9pKmK3eprNnJY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
