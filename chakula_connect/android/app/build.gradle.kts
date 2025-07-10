@@ -6,21 +6,12 @@ plugins {
 }
 
 android {
-    namespace = "com.chakulaconnect.app" // ✅ Correct format
+    namespace = "com.chakulaconnect.app"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
-    }
-
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_11.toString()
-    }
-
     defaultConfig {
-        applicationId = "com.chakulaconnect.app" // ✅ Must match Firebase
+        applicationId = "com.chakulaconnect.app"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
@@ -32,8 +23,18 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+
+    kotlinOptions {
+        jvmTarget = JavaVersion.VERSION_11.toString()
+    }
 }
 
 flutter {
     source = "../.."
 }
+
