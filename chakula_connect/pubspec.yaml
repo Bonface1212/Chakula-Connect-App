@@ -25,7 +25,7 @@ dependencies:
   cupertino_icons: ^1.0.8
 
   # ✅ Location and Maps
-  location: ^7.0.0
+  location: ^5.0.3
   google_maps_flutter: ^2.6.0
 
   # ✅ Platform compatibility (no-op on Android/iOS, required for Web)
@@ -43,7 +43,12 @@ flutter:
     - assets/images/chakula connect.png
 
   # Optional: Custom fonts (uncomment if needed)
-  # fonts:
+  #fonts:
   #   - family: CustomFont
   #     fonts:
   #       - asset: fonts/CustomFont-Regular.ttf
+  fonts:
+    - family: Noto
+      fonts:
+        - asset: fonts/NotoSans-Regular.ttf
+        - asset: fonts/NotoColorEmoji.ttf
