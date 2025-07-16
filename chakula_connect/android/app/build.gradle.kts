@@ -1,7 +1,7 @@
 plugins {
     id("com.android.application")
     id("kotlin-android")
-    id("com.google.gms.google-services") // ✅ Needed for Firebase
+    id("com.google.gms.google-services") // Required for Firebase
     id("dev.flutter.flutter-gradle-plugin")
 }
 
@@ -11,16 +11,25 @@ android {
     ndkVersion = flutter.ndkVersion
 
     defaultConfig {
-        applicationId = "com.chakulaconnect.app"
+        applicationId = "com.chakulaconnect.app" // Must match Firebase project package
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        multiDexEnabled = true // ✅ Helpful for Firebase with many dependencies
     }
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("debug") // Replace with real signing config for release
+            isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+        debug {
+            isMinifyEnabled = false
         }
     }
 
@@ -37,4 +46,3 @@ android {
 flutter {
     source = "../.."
 }
-

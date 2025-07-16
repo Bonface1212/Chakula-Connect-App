@@ -1,7 +1,13 @@
-import 'package:flutter/foundation.dart';
+// ignore_for_file: unused_import
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'firebase_options.dart'; // ✅ Firebase options
+
+// Screens
 import 'screens/welcome_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/donor_dashboard.dart';
@@ -10,18 +16,17 @@ import 'screens/recipient_dashboard.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // ✅ Initialize Firebase with platform-specific options
   await Firebase.initializeApp(
-    options: kIsWeb
-        ? const FirebaseOptions(
-            apiKey: "AIzaSyBEHWn31o5UhBw87ZwLXujH-aS_NcgjNg0",
-            authDomain: "chakulaconnect.firebaseapp.com",
-            projectId: "chakulaconnect",
-            storageBucket: "chakulaconnect.appspot.com",
-            messagingSenderId: "591799144347",
-            appId: "1:591799144347:web:f9a036df7b1fd05c2bdb3e",
-          )
-        : null,
+    options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // ✅ Ensure Firestore is online (especially for web)
+  try {
+    await FirebaseFirestore.instance.enableNetwork();
+  } catch (e) {
+    print('Error enabling Firestore network: $e');
+  }
 
   runApp(const ChakulaConnectApp());
 }

@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -22,7 +24,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _picker = ImagePicker();
   final Location _location = Location();
 
-  File? _profileImage;
+  File? _profileImageFile;
+  Uint8List? _webImageData;
+
   String? _role;
   bool _isLoading = false;
   bool _showPassword = false;
@@ -37,7 +41,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _usernameController = TextEditingController();
   final _phoneController = TextEditingController();
 
-  PhoneNumber _phoneNumber = PhoneNumber(isoCode: 'KE');
+  final PhoneNumber _phoneNumber = PhoneNumber(isoCode: 'KE');
   String? _rawPhoneNumber;
 
   double _passwordStrength = 0.0;
@@ -69,10 +73,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _pickImage() async {
     final picked = await _picker.pickImage(source: ImageSource.gallery);
     if (picked != null) {
-      setState(() {
-        _profileImage = File(picked.path);
-        _showImageError = false;
-      });
+      if (kIsWeb) {
+        final bytes = await picked.readAsBytes();
+        setState(() {
+          _webImageData = bytes;
+          _profileImageFile = null;
+          _showImageError = false;
+        });
+      } else {
+        setState(() {
+          _profileImageFile = File(picked.path);
+          _webImageData = null;
+          _showImageError = false;
+        });
+      }
     }
   }
 
@@ -104,7 +118,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    if (_profileImage == null) {
+    if (_profileImageFile == null && _webImageData == null) {
       setState(() => _showImageError = true);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please upload a profile picture')),
@@ -124,10 +138,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
         password: _passwordController.text,
       );
 
-      final uploadTask = await storage
-          .ref('profiles/${result.user!.uid}.jpg')
-          .putFile(_profileImage!);
-      final imageUrl = await uploadTask.ref.getDownloadURL();
+      final ref = storage.ref('profiles/${result.user!.uid}.jpg');
+
+      UploadTask uploadTask;
+      if (kIsWeb) {
+        uploadTask = ref.putData(_webImageData!);
+      } else {
+        uploadTask = ref.putFile(_profileImageFile!);
+      }
+
+      final imageUrl = await (await uploadTask).ref.getDownloadURL();
 
       await firestore.collection('users').doc(result.user!.uid).set({
         'fullName': _fullNameController.text.trim(),
@@ -144,9 +164,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (_) => _role == 'Donor'
-              ? const DonorDashboard()
-              : const RecipientDashboard(),
+          builder: (_) =>
+              _role == 'Donor' ? const DonorDashboard() : const RecipientDashboard(),
         ),
       );
     } catch (e) {
@@ -156,6 +175,35 @@ class _RegisterScreenState extends State<RegisterScreen> {
     } finally {
       setState(() => _isLoading = false);
     }
+  }
+
+  Widget _buildProfileImage() {
+    ImageProvider? image;
+    if (_webImageData != null) {
+      image = MemoryImage(_webImageData!);
+    } else if (_profileImageFile != null) {
+      image = FileImage(_profileImageFile!);
+    }
+
+    return GestureDetector(
+      onTap: _pickImage,
+      child: Container(
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: _showImageError ? Colors.red : Colors.green,
+            width: 2,
+          ),
+        ),
+        child: CircleAvatar(
+          radius: 50,
+          backgroundColor: Colors.green.shade100,
+          backgroundImage: image,
+          child: image == null ? const Icon(Icons.camera_alt, size: 40) : null,
+        ),
+      ),
+    );
   }
 
   @override
@@ -175,30 +223,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             key: _formKey,
             child: Column(
               children: [
-                // ✅ Profile Image
-                GestureDetector(
-                  onTap: _pickImage,
-                  child: Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: _showImageError ? Colors.red : Colors.green,
-                        width: 2,
-                      ),
-                    ),
-                    child: CircleAvatar(
-                      radius: 50,
-                      backgroundColor: Colors.green.shade100,
-                      backgroundImage: _profileImage != null
-                          ? FileImage(_profileImage!)
-                          : null,
-                      child: _profileImage == null
-                          ? const Icon(Icons.camera_alt, size: 40)
-                          : null,
-                    ),
-                  ),
-                ),
+                _buildProfileImage(),
                 if (_showImageError)
                   const Padding(
                     padding: EdgeInsets.only(top: 6),
@@ -209,7 +234,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ),
                 const SizedBox(height: 16),
 
-                // ✅ Role
                 DropdownButtonFormField<String>(
                   value: _role,
                   items: const [
@@ -222,12 +246,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     prefixIcon: Icon(Icons.person_outline),
                     border: OutlineInputBorder(),
                   ),
-                  validator: (value) =>
-                      value == null ? 'Please select a role' : null,
+                  validator: (value) => value == null ? 'Please select a role' : null,
                 ),
                 const SizedBox(height: 16),
 
-                // ✅ Full Name
                 TextFormField(
                   controller: _fullNameController,
                   decoration: const InputDecoration(
@@ -240,7 +262,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // ✅ Username
                 TextFormField(
                   controller: _usernameController,
                   decoration: const InputDecoration(
@@ -248,12 +269,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     prefixIcon: Icon(Icons.account_circle),
                     border: OutlineInputBorder(),
                   ),
-                  validator: (value) =>
-                      value!.isEmpty ? 'Enter a username' : null,
+                  validator: (value) => value!.isEmpty ? 'Enter a username' : null,
                 ),
                 const SizedBox(height: 16),
 
-                // ✅ Email
                 TextFormField(
                   controller: _emailController,
                   decoration: const InputDecoration(
@@ -267,7 +286,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // ✅ Password
                 TextFormField(
                   controller: _passwordController,
                   obscureText: !_showPassword,
@@ -278,8 +296,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     prefixIcon: const Icon(Icons.lock_outline),
                     border: const OutlineInputBorder(),
                     suffixIcon: IconButton(
-                      icon: Icon(
-                          _showPassword ? Icons.visibility : Icons.visibility_off),
+                      icon: Icon(_showPassword
+                          ? Icons.visibility
+                          : Icons.visibility_off),
                       onPressed: () =>
                           setState(() => _showPassword = !_showPassword),
                     ),
@@ -319,7 +338,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // ✅ Confirm Password
                 TextFormField(
                   controller: _confirmPasswordController,
                   obscureText: !_showPassword,
@@ -328,19 +346,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     prefixIcon: const Icon(Icons.lock_open_outlined),
                     border: const OutlineInputBorder(),
                     suffixIcon: IconButton(
-                      icon: Icon(
-                          _showPassword ? Icons.visibility : Icons.visibility_off),
+                      icon: Icon(_showPassword
+                          ? Icons.visibility
+                          : Icons.visibility_off),
                       onPressed: () =>
                           setState(() => _showPassword = !_showPassword),
                     ),
                   ),
-                  validator: (value) => value == _passwordController.text
-                      ? null
-                      : 'Passwords do not match',
+                  validator: (value) =>
+                      value == _passwordController.text ? null : 'Passwords do not match',
                 ),
                 const SizedBox(height: 16),
 
-                // ✅ National ID
                 TextFormField(
                   controller: _nationalIdController,
                   decoration: const InputDecoration(
@@ -353,7 +370,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // ✅ Phone Number (Intl input)
                 InternationalPhoneNumberInput(
                   onInputChanged: (PhoneNumber number) {
                     _rawPhoneNumber = number.phoneNumber;
@@ -378,7 +394,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // ✅ Location (with GPS button)
                 TextFormField(
                   controller: _locationController,
                   decoration: InputDecoration(
@@ -399,7 +414,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
                 const SizedBox(height: 24),
 
-                // ✅ Register Button
                 ElevatedButton.icon(
                   onPressed: _isLoading ? null : _register,
                   icon: const Icon(Icons.person_add),
