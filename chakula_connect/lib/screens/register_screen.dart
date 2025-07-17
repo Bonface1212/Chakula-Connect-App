@@ -1,15 +1,16 @@
-// ignore_for_file: unused_element, unused_field
-
+// ignore_for_file: use_build_context_synchronously
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:location/location.dart';
-import 'package:intl_phone_number_input/intl_phone_number_input.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:geocoding/geocoding.dart';
+import 'package:intl_phone_field/intl_phone_field.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 
 import 'donor_dashboard.dart';
 import 'recipient_dashboard.dart';
@@ -23,200 +24,185 @@ class RegisterScreen extends StatefulWidget {
 
 class _RegisterScreenState extends State<RegisterScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _picker = ImagePicker();
-  final Location _location = Location();
+  final _auth = FirebaseAuth.instance;
+  final _firestore = FirebaseFirestore.instance;
 
+  final _fullNameController = TextEditingController();
+  final _usernameController = TextEditingController();
+  final _emailController = TextEditingController();
+  final _nationalIdController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
+  final _locationController = TextEditingController();
+
+  String _phone = '';
+  String? _role;
+  bool _isPasswordVisible = false;
+  bool _isConfirmPasswordVisible = false;
+  bool _isLoading = false;
+  bool _agreedToTerms = false;
   File? _profileImageFile;
   Uint8List? _webImageData;
 
-  String? _role;
-  bool _isLoading = false;
-  final bool _showPassword = false;
-  bool _showImageError = false;
-
-  final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
-  final _confirmPasswordController = TextEditingController();
-  final _nationalIdController = TextEditingController();
-  final _locationController = TextEditingController();
-  final _fullNameController = TextEditingController();
-  final _usernameController = TextEditingController();
-  final _phoneController = TextEditingController();
-
-  final PhoneNumber _phoneNumber = PhoneNumber(isoCode: 'KE');
-  String? _rawPhoneNumber;
-
-  double _passwordStrength = 0.0;
-  String _passwordStrengthLabel = '';
-  Color _strengthColor = Colors.grey;
-
-  void _checkPasswordStrength(String password) {
-    double strength = 0;
-    if (password.length >= 8) strength += 0.25;
-    if (RegExp(r'[A-Z]').hasMatch(password)) strength += 0.25;
-    if (RegExp(r'[0-9]').hasMatch(password)) strength += 0.25;
-    if (RegExp(r'[!@#\$%^&*(),.?":{}|<>]').hasMatch(password)) strength += 0.25;
-
-    setState(() {
-      _passwordStrength = strength;
-      if (strength < 0.5) {
-        _strengthColor = Colors.red;
-        _passwordStrengthLabel = 'Weak ❌';
-      } else if (strength < 0.75) {
-        _strengthColor = Colors.orange;
-        _passwordStrengthLabel = 'Medium ⚠️';
-      } else {
-        _strengthColor = Colors.green;
-        _passwordStrengthLabel = 'Strong ✅';
-      }
-    });
-  }
-
   Future<void> _pickImage() async {
-    final picked = await _picker.pickImage(source: ImageSource.gallery);
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(source: ImageSource.gallery);
     if (picked != null) {
       if (kIsWeb) {
-        final bytes = await picked.readAsBytes();
-        setState(() {
-          _webImageData = bytes;
-          _profileImageFile = null;
-          _showImageError = false;
-        });
+        final data = await picked.readAsBytes();
+        setState(() => _webImageData = data);
       } else {
-        setState(() {
-          _profileImageFile = File(picked.path);
-          _webImageData = null;
-          _showImageError = false;
-        });
+        setState(() => _profileImageFile = File(picked.path));
       }
     }
   }
 
   Future<void> _detectLocation() async {
-    bool serviceEnabled = await _location.serviceEnabled();
-    if (!serviceEnabled) {
-      serviceEnabled = await _location.requestService();
-      if (!serviceEnabled) return;
-    }
+    try {
+      final permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Location permission denied")),
+        );
+        return;
+      }
 
-    PermissionStatus permissionGranted = await _location.hasPermission();
-    if (permissionGranted == PermissionStatus.denied) {
-      permissionGranted = await _location.requestPermission();
-      if (permissionGranted != PermissionStatus.granted) return;
+      final position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      final placemarks = await placemarkFromCoordinates(position.latitude, position.longitude);
+      final place = placemarks.first;
+      final address = "${place.locality}, ${place.administrativeArea}, ${place.country}";
+      setState(() => _locationController.text = address);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Location error: ${e.toString()}")),
+      );
     }
-
-    final currentLocation = await _location.getLocation();
-    setState(() {
-      _locationController.text =
-          'Lat: ${currentLocation.latitude}, Lng: ${currentLocation.longitude}';
-    });
   }
 
-  Future<void> _register() async {
-    if (!_formKey.currentState!.validate()) return;
+  Future<String?> _uploadProfileImage(String uid) async {
+    try {
+      final ref = FirebaseStorage.instance
+          .ref('profile_images/$uid-${DateTime.now().millisecondsSinceEpoch}.jpg');
 
-    if (_role == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please select your role')),
-        );
+      UploadTask uploadTask;
+      if (kIsWeb && _webImageData != null) {
+        uploadTask = ref.putData(_webImageData!);
+      } else if (_profileImageFile != null) {
+        uploadTask = ref.putFile(_profileImageFile!);
+      } else {
+        return null;
       }
-      return;
-    }
 
-    if (_profileImageFile == null && _webImageData == null) {
-      setState(() => _showImageError = true);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please upload a profile picture')),
-        );
-      }
-      return;
+      final snapshot = await uploadTask;
+      return await snapshot.ref.getDownloadURL();
+    } catch (e) {
+      print("Upload error: $e");
+      return null;
     }
+  }
+
+Future<void> _register() async {
+  final connectivityResult = await Connectivity().checkConnectivity();
+  if (connectivityResult == ConnectivityResult.none) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("No internet connection")),
+    );
+    return;
+  }
+
+  if (!_formKey.currentState!.validate()) return;
+
+  if (_role == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Please select a role")),
+    );
+    return;
+  }
+
+  if (_passwordController.text != _confirmPasswordController.text) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Passwords do not match")),
+    );
+    return;
+  }
+
+  if (!_agreedToTerms) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("You must agree to the Terms and Conditions")),
+    );
+    return;
+  }
+
+  setState(() => _isLoading = true);
+
+  try {
+    final userCredential = await _auth.createUserWithEmailAndPassword(
+      email: _emailController.text.trim(),
+      password: _passwordController.text.trim(),
+    );
+
+    final uid = userCredential.user!.uid;
+    print("✅ User created: $uid");
+
+    final profileImageUrl = await _uploadProfileImage(uid);
+    print("✅ Profile image uploaded: $profileImageUrl");
+
+    final userData = {
+      'uid': uid,
+      'fullName': _fullNameController.text.trim(),
+      'username': _usernameController.text.trim(),
+      'email': _emailController.text.trim(),
+      'nationalId': _nationalIdController.text.trim(),
+      'phone': _phone,
+      'location': _locationController.text.trim(),
+      'role': _role,
+      'profileImage': profileImageUrl ?? '',
+      'createdAt': Timestamp.now(),
+    };
 
     try {
-      setState(() => _isLoading = true);
+      await _firestore.collection('users').doc(uid).set(userData);
+      print("✅ Firestore document written");
 
-      final auth = FirebaseAuth.instance;
-      final firestore = FirebaseFirestore.instance;
-      final storage = FirebaseStorage.instance;
-
-      final result = await auth.createUserWithEmailAndPassword(
-        email: _emailController.text.trim(),
-        password: _passwordController.text,
-      );
-
-      final imageRef = storage.ref('profiles/${result.user!.uid}.jpg');
-      UploadTask uploadTask = kIsWeb
-          ? imageRef.putData(_webImageData!)
-          : imageRef.putFile(_profileImageFile!);
-
-      final imageUrl = await (await uploadTask).ref.getDownloadURL();
-
-      await firestore.collection('users').doc(result.user!.uid).set({
-        'fullName': _fullNameController.text.trim(),
-        'username': _usernameController.text.trim(),
-        'email': _emailController.text.trim(),
-        'nationalId': _nationalIdController.text.trim(),
-        'phone': _rawPhoneNumber,
-        'location': _locationController.text.trim(),
-        'role': _role,
-        'profileImage': imageUrl,
-        'createdAt': Timestamp.now(),
-      });
-
-      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('🎉 Registered successfully!')),
+        const SnackBar(content: Text("Registration successful")),
       );
 
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (_) =>
-              _role == 'Donor' ? const DonorDashboard() : const RecipientDashboard(),
+          builder: (_) => _role == 'Donor'
+              ? const DonorDashboard()
+              : const RecipientDashboard(),
         ),
       );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Registration failed: $e')),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+    } catch (firestoreError) {
+      print("❌ Firestore error: $firestoreError");
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Error saving user to Firestore")),
+      );
     }
-  }
-
-  Widget _buildProfileImage() {
-    ImageProvider? image;
-    if (_webImageData != null) {
-      image = MemoryImage(_webImageData!);
-    } else if (_profileImageFile != null) {
-      image = FileImage(_profileImageFile!);
-    }
-
-    return GestureDetector(
-      onTap: _pickImage,
-      child: Container(
-        padding: const EdgeInsets.all(4),
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          border: Border.all(
-            color: _showImageError ? Colors.red : Colors.green,
-            width: 2,
-          ),
-        ),
-        child: CircleAvatar(
-          radius: 50,
-          backgroundColor: Colors.green.shade100,
-          backgroundImage: image,
-          child: image == null ? const Icon(Icons.camera_alt, size: 40) : null,
-        ),
-      ),
+  } catch (e) {
+    print("❌ Registration error: $e");
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("Registration failed: ${e.toString()}")),
     );
+  } finally {
+    setState(() => _isLoading = false);
+  }
+}
+
+
+  @override
+  void dispose() {
+    _fullNameController.dispose();
+    _usernameController.dispose();
+    _emailController.dispose();
+    _nationalIdController.dispose();
+    _passwordController.dispose();
+    _confirmPasswordController.dispose();
+    _locationController.dispose();
+    super.dispose();
   }
 
   @override
@@ -225,28 +211,179 @@ class _RegisterScreenState extends State<RegisterScreen> {
       backgroundColor: Colors.green.shade50,
       appBar: AppBar(
         title: const Text('Register'),
-        centerTitle: true,
         backgroundColor: Colors.green,
         foregroundColor: Colors.white,
+        centerTitle: true,
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(16),
           child: Form(
             key: _formKey,
             child: Column(
               children: [
-                _buildProfileImage(),
-                if (_showImageError)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 6),
-                    child: Text(
-                      'Profile image is required',
-                      style: TextStyle(color: Colors.red, fontSize: 13),
+                GestureDetector(
+                  onTap: _pickImage,
+                  child: CircleAvatar(
+                    radius: 60,
+                    backgroundColor: Colors.green.shade200,
+                    backgroundImage: _webImageData != null
+                        ? MemoryImage(_webImageData!)
+                        : _profileImageFile != null
+                            ? FileImage(_profileImageFile!)
+                            : null,
+                    child: (_profileImageFile == null && _webImageData == null)
+                        ? const Icon(Icons.camera_alt, size: 40, color: Colors.white)
+                        : null,
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                DropdownButtonFormField<String>(
+                  value: _role,
+                  items: const [
+                    DropdownMenuItem(value: 'Donor', child: Text('Donor')),
+                    DropdownMenuItem(value: 'Recipient', child: Text('Recipient')),
+                  ],
+                  onChanged: (val) => setState(() => _role = val),
+                  decoration: const InputDecoration(
+                    labelText: 'Select Role',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.person_outline),
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                TextFormField(
+                  controller: _fullNameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Full Name',
+                    prefixIcon: Icon(Icons.person),
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (val) => val!.isEmpty ? 'Enter full name' : null,
+                ),
+                const SizedBox(height: 16),
+
+                TextFormField(
+                  controller: _usernameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Username',
+                    prefixIcon: Icon(Icons.account_circle),
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (val) => val!.isEmpty ? 'Enter username' : null,
+                ),
+                const SizedBox(height: 16),
+
+                TextFormField(
+                  controller: _emailController,
+                  decoration: const InputDecoration(
+                    labelText: 'Email',
+                    prefixIcon: Icon(Icons.email),
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (val) => val!.isEmpty ? 'Enter email' : null,
+                ),
+                const SizedBox(height: 16),
+
+                IntlPhoneField(
+                  initialCountryCode: 'KE',
+                  decoration: const InputDecoration(
+                    labelText: 'Phone Number',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.phone),
+                  ),
+                  onChanged: (phone) => _phone = phone.completeNumber,
+                ),
+                const SizedBox(height: 16),
+
+                TextFormField(
+                  controller: _nationalIdController,
+                  decoration: const InputDecoration(
+                    labelText: 'National ID',
+                    prefixIcon: Icon(Icons.credit_card),
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (val) => val!.isEmpty ? 'Enter ID' : null,
+                ),
+                const SizedBox(height: 16),
+
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: _locationController,
+                        decoration: const InputDecoration(
+                          labelText: 'Location',
+                          prefixIcon: Icon(Icons.location_on),
+                          border: OutlineInputBorder(),
+                        ),
+                        validator: (val) => val!.isEmpty ? 'Enter location' : null,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton.icon(
+                      onPressed: _detectLocation,
+                      icon: const Icon(Icons.my_location),
+                      label: const Text("Detect"),
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+
+                TextFormField(
+                  controller: _passwordController,
+                  obscureText: !_isPasswordVisible,
+                  decoration: InputDecoration(
+                    labelText: 'Password',
+                    border: const OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.lock),
+                    suffixIcon: IconButton(
+                      icon: Icon(_isPasswordVisible ? Icons.visibility : Icons.visibility_off),
+                      onPressed: () => setState(() => _isPasswordVisible = !_isPasswordVisible),
                     ),
                   ),
+                  validator: (val) => val!.length < 6 ? 'Password too short' : null,
+                ),
                 const SizedBox(height: 16),
-                // Remaining form fields go here...
+
+                TextFormField(
+                  controller: _confirmPasswordController,
+                  obscureText: !_isConfirmPasswordVisible,
+                  decoration: InputDecoration(
+                    labelText: 'Confirm Password',
+                    border: const OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.lock_outline),
+                    suffixIcon: IconButton(
+                      icon: Icon(_isConfirmPasswordVisible ? Icons.visibility : Icons.visibility_off),
+                      onPressed: () => setState(() => _isConfirmPasswordVisible = !_isConfirmPasswordVisible),
+                    ),
+                  ),
+                  validator: (val) => val != _passwordController.text ? 'Passwords do not match' : null,
+                ),
+                const SizedBox(height: 16),
+
+                CheckboxListTile(
+                  value: _agreedToTerms,
+                  onChanged: (val) => setState(() => _agreedToTerms = val!),
+                  title: const Text("I agree to the Terms and Conditions"),
+                  controlAffinity: ListTileControlAffinity.leading,
+                ),
+                const SizedBox(height: 16),
+
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.app_registration),
+                  label: Text(_isLoading ? "Registering..." : "Register"),
+                  onPressed: _isLoading ? null : _register,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size(double.infinity, 50),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                  ),
+                ),
               ],
             ),
           ),

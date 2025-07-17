@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../main.dart'; // Make sure this is the correct relative path
 import 'donor_dashboard.dart';
 import 'recipient_dashboard.dart';
 import 'register_screen.dart';
@@ -40,8 +41,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
       String email = identifier;
 
+      // If identifier is a username, resolve to email
       if (!identifier.contains('@')) {
-        // Lookup email by username
         final query = await _firestore
             .collection('users')
             .where('username', isEqualTo: identifier)
@@ -49,12 +50,14 @@ class _LoginScreenState extends State<LoginScreen> {
             .get();
 
         if (query.docs.isEmpty) {
-          throw Exception("Username not found.");
+          throw Exception("No account found with that username.");
         }
 
-        email = query.docs.first['email'];
+        final doc = query.docs.first;
+        email = doc['email'];
       }
 
+      // Sign in using resolved email
       final result = await _auth.signInWithEmailAndPassword(
         email: email,
         password: password,
@@ -62,19 +65,28 @@ class _LoginScreenState extends State<LoginScreen> {
 
       final userDoc = await _firestore.collection('users').doc(result.user!.uid).get();
 
-      if (userDoc.exists && userDoc.data()?['role'] == _selectedRole) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => _selectedRole == 'Donor'
-                ? const DonorDashboard()
-                : const RecipientDashboard(),
-          ),
-        );
-      } else {
-        throw Exception('Role mismatch or account not found.');
+      if (!userDoc.exists) {
+        throw Exception("User data not found in Firestore.");
       }
+
+      final firestoreRole = userDoc['role'];
+      print("Firestore Role: $firestoreRole | Selected Role: $_selectedRole");
+
+      if (firestoreRole != _selectedRole) {
+        throw Exception("Role mismatch. You selected $_selectedRole, but account is registered as $firestoreRole.");
+      }
+
+      // Navigate to appropriate dashboard
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => _selectedRole == 'Donor'
+              ? const DonorDashboard()
+              : const RecipientDashboard(),
+        ),
+      );
     } catch (e) {
+      print("Login error: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Login failed: ${e.toString()}')),
       );
@@ -106,6 +118,24 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        actions: [
+          IconButton(
+            icon: Icon(
+              themeNotifier.value == ThemeMode.dark
+                  ? Icons.light_mode
+                  : Icons.dark_mode,
+            ),
+            onPressed: () {
+              themeNotifier.value = themeNotifier.value == ThemeMode.dark
+                  ? ThemeMode.light
+                  : ThemeMode.dark;
+            },
+          ),
+        ],
+      ),
       backgroundColor: Colors.green.shade50,
       body: SafeArea(
         child: Center(
