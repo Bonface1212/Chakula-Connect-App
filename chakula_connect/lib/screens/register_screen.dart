@@ -31,7 +31,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   String? _role;
   bool _isLoading = false;
-  bool _showPassword = false;
+  final bool _showPassword = false;
   bool _showImageError = false;
 
   final _emailController = TextEditingController();

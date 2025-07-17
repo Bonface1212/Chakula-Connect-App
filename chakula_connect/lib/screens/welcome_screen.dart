@@ -22,9 +22,9 @@ class WelcomeScreen extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 // App Title
-                Row(
+                const Row(
                   mainAxisAlignment: MainAxisAlignment.center,
-                  children: const [
+                  children: [
                     Icon(Icons.food_bank_rounded, color: Colors.green, size: 32),
                     SizedBox(width: 8),
                     Text(

@@ -47,8 +47,8 @@ flutter:
   #   - family: CustomFont
   #     fonts:
   #       - asset: fonts/CustomFont-Regular.ttf
-  fonts:
-    - family: Noto
-      fonts:
-        - asset: fonts/NotoSans-Regular.ttf
-        - asset: fonts/NotoColorEmoji.ttf
+  #fonts:
+   # - family: Noto
+    #  fonts:
+      #  - asset: fonts/NotoSans-Regular.ttf
+      #  - asset: fonts/NotoColorEmoji.ttf
