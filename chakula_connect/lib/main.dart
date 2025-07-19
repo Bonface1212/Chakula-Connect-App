@@ -1,11 +1,13 @@
-// ignore_for_file: unused_import
+// ignore_for_file: unused_import, use_build_context_synchronously
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-import 'firebase_options.dart'; // ✅ Firebase options
+import 'firebase_options.dart';
 
 // Screens
 import 'screens/welcome_screen.dart';
@@ -16,22 +18,34 @@ import 'screens/recipient_dashboard.dart';
 // Theme controller using ValueNotifier
 final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.light);
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // ✅ Initialize Firebase with platform-specific options
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
-
-  // ✅ Ensure Firestore is online (especially for web)
   try {
-    await FirebaseFirestore.instance.enableNetwork();
+    // ✅ Load environment variables securely
+    await dotenv.load(fileName: ".env");
   } catch (e) {
-    print('Error enabling Firestore network: $e');
+    debugPrint("⚠️ Failed to load .env: $e");
   }
 
-  runApp(const ChakulaConnectApp());
+  try {
+    // ✅ Initialize Firebase safely
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+
+    // ✅ Ensure Firestore is connected (especially for web)
+    await FirebaseFirestore.instance.enableNetwork();
+  } catch (e) {
+    debugPrint("⚠️ Firebase init error: ${e.toString()}");
+  }
+
+  // ✅ Wrap app with ProviderScope (Riverpod support)
+  runApp(
+    const ProviderScope(
+      child: ChakulaConnectApp(),
+    ),
+  );
 }
 
 class ChakulaConnectApp extends StatelessWidget {

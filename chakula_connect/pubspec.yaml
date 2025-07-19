@@ -10,7 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # ✅ Firebase core services (with web support)
+  # ✅ Firebase core services (web support)
   firebase_core: ^2.27.0
   firebase_core_web: ^2.9.0
   firebase_auth: ^4.20.0
@@ -24,16 +24,27 @@ dependencies:
   fluttertoast: ^8.2.4
   image_cropper: ^9.1.0
   image_picker: ^1.1.0
-  intl_phone_field: 3.1.0       # ✅ Stable version with flags
+  intl_phone_field: ^3.1.0         # For phone input with flags
   permission_handler: ^11.3.1
   provider: ^6.1.1
+  flutter_riverpod: ^2.5.1
   connectivity_plus: ^5.0.2
+  intl: ^0.19.0                    # For formatting dates/numbers
+  flutter_dotenv: ^5.1.0
+ 
 
   # ✅ Location and Maps
   geocoding: ^2.1.0
   geolocator: ^11.0.0
-  google_maps_flutter: ^2.6.0
   location: ^6.0.2
+  google_maps_flutter: ^2.6.0
+  flutter_polyline_points: ^2.1.0  # For drawing directions
+  url_launcher: ^6.2.6             # Open external apps/URLs
+
+  # ✅ State & Animations
+  animations: ^2.0.11
+  lottie: ^3.1.2                   # JSON-based animations
+  shimmer: ^3.0.0                  # Loading skeletons
 
   # ✅ Platform compatibility
   universal_io: ^2.2.2
@@ -48,13 +59,14 @@ flutter:
 
   assets:
     - assets/images/chakula connect.png
+    - assets/animations/
 
-  # Optional: Custom fonts
-  # fonts:
-  #   - family: CustomFont
-  #     fonts:
-  #       - asset: fonts/CustomFont-Regular.ttf
-  #   - family: Noto
-  #     fonts:
-  #       - asset: fonts/NotoSans-Regular.ttf
-  #       - asset: fonts/NotoColorEmoji.ttf
+  fonts:
+    - family: Nunito
+      fonts:
+        - asset: assets/fonts/Nunito-Regular.ttf
+        - asset: assets/fonts/Nunito-Bold.ttf
+    - family: Noto
+      fonts:
+        - asset: assets/fonts/NotoSans-Regular.ttf
+        - asset: assets/fonts/NotoColorEmoji.ttf
