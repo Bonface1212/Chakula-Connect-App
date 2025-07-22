@@ -1,225 +1,312 @@
-// lib/screens/recipient/map_tab.dart
-// ignore_for_file: use_build_context_synchronously
+// ignore_for_file: use_build_context_synchronously, unused_import, unused_field
 
 import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:flutter_polyline_points/flutter_polyline_points.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:chakula_connect/main.dart'; // Import themeNotifier
+import 'package:location/location.dart' as loc;
+import 'package:geocoding/geocoding.dart' as geocoding;
+import 'package:permission_handler/permission_handler.dart' as perm;
 
-class MapTab extends StatefulWidget {
-  const MapTab({Key? key}) : super(key: key);
+class MapTab extends ConsumerStatefulWidget {
+  const MapTab({super.key});
 
   @override
-  State<MapTab> createState() => _MapTabState();
+  ConsumerState<MapTab> createState() => _MapTabState();
 }
 
-class _MapTabState extends State<MapTab> {
-  final Completer<GoogleMapController> _controller = Completer();
-  late GoogleMapController _mapController;
+class _MapTabState extends ConsumerState<MapTab> {
+  final Completer<GoogleMapController> _mapController = Completer();
+  final loc.Location _location = loc.Location();
+  loc.LocationData? _currentLocation;
+  bool _locationPermissionGranted = false;
+  bool _useFallback = false;
+  bool _hasError = false;
+  LatLng? _manualLocation;
+  String? _selectedCategory;
+  Set<Marker> _markers = {};
+  StreamSubscription<QuerySnapshot>? _donationSubscription;
+  Set<Polyline> _polylines = {};
 
-  Position? _currentPosition;
-  final Set<Marker> _markers = {};
-  final Set<Polyline> _polylines = {};
-  final List<LatLng> _polylineCoordinates = [];
-  late PolylinePoints polylinePoints;
-
-  final String googleAPIKey = dotenv.env['GOOGLE_MAPS_API_KEY']!;
-
-  final List<Map<String, dynamic>> mockDonations = [
-    {
-      'name': 'Excess Bread',
-      'position': const LatLng(-1.286389, 36.817223),
-      'description': 'Fresh bread from bakery',
-    },
-    {
-      'name': 'Vegetables',
-      'position': const LatLng(-1.28333, 36.81667),
-      'description': 'Surplus kale and spinach',
-    },
-    {
-      'name': 'Cooked Rice',
-      'position': const LatLng(-1.29, 36.82),
-      'description': 'Leftover rice from restaurant',
-    },
-  ];
+  static const LatLng _fallbackLocation = LatLng(-1.2921, 36.8219); // Nairobi
 
   @override
   void initState() {
     super.initState();
-    polylinePoints = PolylinePoints();
-    _getCurrentLocation();
+    _initLocation();
   }
 
-  Future<void> _getCurrentLocation() async {
+  @override
+  void dispose() {
+    _donationSubscription?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _initLocation() async {
     try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        await Geolocator.openLocationSettings();
+      final serviceEnabled = await _location.serviceEnabled();
+      if (!serviceEnabled && !await _location.requestService()) {
+        _handleLocationError();
         return;
       }
 
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        permission = await Geolocator.requestPermission();
-        if (permission != LocationPermission.whileInUse &&
-            permission != LocationPermission.always) {
-          return;
-        }
+      final permission = await _location.hasPermission();
+      if (permission == loc.PermissionStatus.denied &&
+          await _location.requestPermission() != loc.PermissionStatus.granted) {
+        _handleLocationError();
+        return;
       }
 
-      Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
+      _locationPermissionGranted = true;
+      final locationData = await _location.getLocation();
 
       setState(() {
-        _currentPosition = position;
-
-        _markers.removeWhere(
-          (marker) => marker.markerId == const MarkerId('currentLocation'),
-        );
-
-        _markers.add(
-          Marker(
-            markerId: const MarkerId('currentLocation'),
-            position: LatLng(position.latitude, position.longitude),
-            infoWindow: const InfoWindow(title: 'You Are Here'),
-            icon: BitmapDescriptor.defaultMarkerWithHue(
-              BitmapDescriptor.hueAzure,
-            ),
-          ),
-        );
+        _currentLocation = locationData;
+        _useFallback = false;
+        _hasError = false;
       });
 
-      _loadMockDonations();
-
-      if (_controller.isCompleted) {
-        final controller = await _controller.future;
-        controller.animateCamera(
-          CameraUpdate.newLatLngZoom(
-            LatLng(position.latitude, position.longitude),
-            14,
-          ),
-        );
-      }
+      _listenToDonations();
     } catch (e) {
-      debugPrint('Location error: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to get location: $e')),
-      );
+      _handleLocationError();
     }
   }
 
-  void _loadMockDonations() {
-    for (var donation in mockDonations) {
-      final LatLng pos = donation['position'];
-      final String name = donation['name'];
-      final String description = donation['description'];
-
-      _markers.add(
-        Marker(
-          markerId: MarkerId(name),
-          position: pos,
-          infoWindow: InfoWindow(
-            title: name,
-            snippet: description,
-            onTap: () => _drawRouteTo(pos),
-          ),
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-        ),
-      );
-    }
-    setState(() {});
+  void _handleLocationError() {
+    setState(() {
+      _useFallback = true;
+      _hasError = true;
+      _currentLocation = loc.LocationData.fromMap({
+        'latitude': _fallbackLocation.latitude,
+        'longitude': _fallbackLocation.longitude,
+      });
+    });
+    _listenToDonations();
   }
 
-  Future<void> _drawRouteTo(LatLng destination) async {
-    if (_currentPosition == null) return;
+  void _listenToDonations() {
+    _donationSubscription?.cancel();
 
-    try {
-      _polylines.clear();
-      _polylineCoordinates.clear();
+    _donationSubscription = FirebaseFirestore.instance
+        .collection('donations')
+        .where('isClaimed', isEqualTo: false)
+        .snapshots()
+        .listen((snapshot) {
+      Set<Marker> newMarkers = {};
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        final category = data['category'] as String?;
+        final geo = data['location'];
+        if (geo == null) continue;
 
-      final result = await polylinePoints.getRouteBetweenCoordinates(
-        request: PolylineRequest(
-          origin: PointLatLng(
-            _currentPosition!.latitude,
-            _currentPosition!.longitude,
-          ),
-          destination: PointLatLng(destination.latitude, destination.longitude),
-          mode: TravelMode.driving,
-        ),
-        googleApiKey: googleAPIKey,
-      );
+        final lat = geo['latitude'];
+        final lng = geo['longitude'];
+        if (lat == null || lng == null) continue;
 
-      if (result.points.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No route found.')),
+        if (_selectedCategory == null || _selectedCategory == category) {
+          newMarkers.add(
+            Marker(
+              markerId: MarkerId(doc.id),
+              position: LatLng(lat, lng),
+              infoWindow: InfoWindow(
+                title: data['title'] ?? 'Donation',
+                snippet: category ?? 'No Category',
+              ),
+              onTap: () => _drawRouteTo(lat, lng),
+            ),
+          );
+        }
+      }
+      setState(() => _markers = newMarkers);
+    });
+  }
+
+  Future<void> _drawRouteTo(double lat, double lng) async {
+    final userLatLng =
+        _manualLocation ??
+        LatLng(
+          _currentLocation?.latitude ?? _fallbackLocation.latitude,
+          _currentLocation?.longitude ?? _fallbackLocation.longitude,
         );
-        return;
-      }
 
-      for (var point in result.points) {
-        _polylineCoordinates.add(LatLng(point.latitude, point.longitude));
-      }
+    final donationLatLng = LatLng(lat, lng);
 
-      _polylines.add(
+    setState(() {
+      _polylines = {
         Polyline(
-          polylineId: PolylineId(
-            'route_${DateTime.now().millisecondsSinceEpoch}',
-          ),
+          polylineId: const PolylineId('route'),
           color: Colors.green,
           width: 5,
-          points: _polylineCoordinates,
+          points: [userLatLng, donationLatLng],
         ),
-      );
+      };
+    });
 
-      setState(() {});
-      _mapController.animateCamera(CameraUpdate.newLatLng(destination));
-    } catch (e) {
-      debugPrint('Route drawing error: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to draw route: $e')),
-      );
+    final controller = await _mapController.future;
+    controller.animateCamera(
+      CameraUpdate.newLatLngBounds(
+        LatLngBounds(
+          southwest: LatLng(
+            userLatLng.latitude < donationLatLng.latitude
+                ? userLatLng.latitude
+                : donationLatLng.latitude,
+            userLatLng.longitude < donationLatLng.longitude
+                ? userLatLng.longitude
+                : donationLatLng.longitude,
+          ),
+          northeast: LatLng(
+            userLatLng.latitude > donationLatLng.latitude
+                ? userLatLng.latitude
+                : donationLatLng.latitude,
+            userLatLng.longitude > donationLatLng.longitude
+                ? userLatLng.longitude
+                : donationLatLng.longitude,
+          ),
+        ),
+        100,
+      ),
+    );
+  }
+
+  Future<void> _promptManualLocationInput() async {
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Enter your location"),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(hintText: "e.g. Nairobi, Kenya"),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(null),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+            child: const Text("Submit"),
+          ),
+        ],
+      ),
+    );
+
+    if (result != null && result.isNotEmpty) {
+      try {
+        final locations = await geocoding.locationFromAddress(result);
+        if (locations.isNotEmpty) {
+          final found = locations.first;
+          setState(() {
+            _manualLocation = LatLng(found.latitude, found.longitude);
+            _useFallback = true;
+            _hasError = false;
+          });
+          _listenToDonations();
+        }
+      } catch (e) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text("Location not found")));
+      }
     }
+  }
+
+  Widget _buildErrorUI() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Text("Unable to load map."),
+          const SizedBox(height: 10),
+          const Text("Please enable location and check permission"),
+          const SizedBox(height: 20),
+          ElevatedButton(
+            onPressed: _promptManualLocationInput,
+            child: const Text("Enter Location Manually"),
+          ),
+          const SizedBox(height: 10),
+          ElevatedButton(onPressed: _initLocation, child: const Text("Retry")),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final isDarkMode = themeNotifier.value == ThemeMode.dark;
+    const isDarkMode = false;
+
+    final isReady = _currentLocation != null || _manualLocation != null;
+
+    if (!isReady) {
+      return _hasError
+          ? _buildErrorUI()
+          : const Center(child: CircularProgressIndicator());
+    }
+
+    final initialPosition =
+        _manualLocation ??
+        LatLng(
+          _currentLocation?.latitude ?? _fallbackLocation.latitude,
+          _currentLocation?.longitude ?? _fallbackLocation.longitude,
+        );
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Donation Map'),
-        centerTitle: true,
         backgroundColor: isDarkMode ? Colors.black : Colors.green,
       ),
-      body: _currentPosition == null
-          ? const Center(child: CircularProgressIndicator())
-          : GoogleMap(
-              mapType: MapType.normal,
-              initialCameraPosition: CameraPosition(
-                target: LatLng(
-                  _currentPosition!.latitude,
-                  _currentPosition!.longitude,
+      body: Column(
+        children: [
+          SizedBox(
+            height: 50,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              children: [
+                FilterChip(
+                  label: const Text("All"),
+                  selected: _selectedCategory == null,
+                  onSelected: (_) => setState(() => _selectedCategory = null),
                 ),
+                const SizedBox(width: 8),
+                ...["Fruits", "Vegetables", "Grains", "Other"].map((cat) {
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: FilterChip(
+                      label: Text(cat),
+                      selected: _selectedCategory == cat,
+                      onSelected: (_) =>
+                          setState(() => _selectedCategory = cat),
+                    ),
+                  );
+                }),
+              ],
+            ),
+          ),
+          Expanded(
+            child: GoogleMap(
+              initialCameraPosition: CameraPosition(
+                target: initialPosition,
                 zoom: 14,
               ),
-              myLocationEnabled: true,
+              myLocationEnabled: !_useFallback,
               myLocationButtonEnabled: true,
               markers: _markers,
               polylines: _polylines,
               onMapCreated: (controller) {
-                _mapController = controller;
-                _controller.complete(controller);
+                if (!_mapController.isCompleted) {
+                  _mapController.complete(controller);
+                }
               },
             ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _getCurrentLocation,
-        backgroundColor: Colors.green,
-        child: const Icon(Icons.my_location),
+          ),
+          if (_markers.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text("No donations nearby in this category."),
+            ),
+        ],
       ),
     );
   }
