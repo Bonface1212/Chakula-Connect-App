@@ -1,15 +1,13 @@
+// ignore_for_file: use_build_context_synchronously
+
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:chakula_connect/theme/brand_colors.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:intl/intl.dart';
+import 'package:uuid/uuid.dart';
 
 class CreateDonationScreen extends StatefulWidget {
   const CreateDonationScreen({super.key});
@@ -20,242 +18,183 @@ class CreateDonationScreen extends StatefulWidget {
 
 class _CreateDonationScreenState extends State<CreateDonationScreen> {
   final _formKey = GlobalKey<FormState>();
-  String _foodName = '';
-  String _expiryDate = '';
-  String _pickupPoint = '';
-  String _message = '';
-  File? _image;
-  bool _isLoading = false;
-  bool _isGettingLocation = false;
+  final _foodNameController = TextEditingController();
+  final _expiryDateController = TextEditingController();
+  final _pickupPointController = TextEditingController();
+  final _messageController = TextEditingController();
 
-  final picker = ImagePicker();
-  late Position _donorLocation;
-
-  Future<void> _getCurrentLocation() async {
-    setState(() => _isGettingLocation = true);
-    try {
-      final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
-      _donorLocation = position;
-      setState(() {
-        _pickupPoint =
-            '${position.latitude.toStringAsFixed(4)}, ${position.longitude.toStringAsFixed(4)}';
-      });
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Failed to get location")),
-      );
-    }
-    setState(() => _isGettingLocation = false);
-  }
+  File? _selectedImage;
+  Uint8List? _webImageData;
+  UploadTask? _uploadTask;
+  bool _isPosting = false;
 
   Future<void> _pickImage() async {
-    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
-    if (pickedFile != null) {
-      setState(() => _image = File(pickedFile.path));
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(source: ImageSource.gallery);
+    if (picked != null) {
+      if (kIsWeb) {
+        final bytes = await picked.readAsBytes();
+        setState(() => _webImageData = bytes);
+      } else {
+        setState(() => _selectedImage = File(picked.path));
+      }
     }
   }
 
-  Future<String> _uploadImage(String donationId) async {
-    final ref = FirebaseStorage.instance
-        .ref()
-        .child('donation_images')
-        .child('$donationId.jpg');
+  Future<String?> _uploadImage() async {
+    final fileName = const Uuid().v4();
+    final ref = FirebaseStorage.instance.ref('donation_images/$fileName.jpg');
 
-    Uint8List? compressedBytes;
-
-    if (kIsWeb) {
-      final originalBytes = await _image!.readAsBytes();
-      compressedBytes = await FlutterImageCompress.compressWithList(
-        originalBytes,
-        minWidth: 800,
-        minHeight: 800,
-        quality: 60,
-      );
-
-      final uploadTask = ref.putData(
-        compressedBytes,
-        SettableMetadata(contentType: 'image/jpeg'),
-      );
-      final snapshot = await uploadTask;
-      return await snapshot.ref.getDownloadURL();
+    if (kIsWeb && _webImageData != null) {
+      _uploadTask = ref.putData(_webImageData!);
+    } else if (_selectedImage != null) {
+      _uploadTask = ref.putFile(_selectedImage!);
     } else {
-      final compressedFile = await FlutterImageCompress.compressAndGetFile(
-        _image!.path,
-        '${_image!.path}_compressed.jpg',
-        quality: 60,
-      );
-      final uploadTask = ref.putFile(File(compressedFile!.path));
-      final snapshot = await uploadTask;
-      return await snapshot.ref.getDownloadURL();
+      return null;
     }
+
+    final snapshot = await _uploadTask!.whenComplete(() {});
+    return await snapshot.ref.getDownloadURL();
   }
 
-  Future<void> _submit() async {
-    if (!_formKey.currentState!.validate() || _image == null) {
+  Future<void> _submitDonation() async {
+    if (!_formKey.currentState!.validate() ||
+        (_selectedImage == null && _webImageData == null)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please fill all fields & pick an image")),
+        const SnackBar(content: Text('Fill all fields and upload an image')),
       );
       return;
     }
 
-    _formKey.currentState!.save();
-
-    setState(() => _isLoading = true);
+    setState(() => _isPosting = true);
 
     try {
-      final currentUser = FirebaseAuth.instance.currentUser;
-      final donationRef =
-          FirebaseFirestore.instance.collection('donations').doc();
+      final imageUrl = await _uploadImage();
 
-      final imageUrl = await _uploadImage(donationRef.id);
-
-      await donationRef.set({
-        'donationId': donationRef.id,
-        'foodName': _foodName,
-        'expiryDate': _expiryDate,
-        'pickupPoint': _pickupPoint,
-        'message': _message,
-        'donorId': currentUser!.uid,
+      final data = {
+        'foodName': _foodNameController.text.trim(),
+        'expiryDate': _expiryDateController.text.trim(),
+        'pickupPoint': _pickupPointController.text.trim(),
+        'message': _messageController.text.trim(),
         'imageUrl': imageUrl,
-        'timestamp': FieldValue.serverTimestamp(),
-        'status': 'available',
-        'location': GeoPoint(
-          _donorLocation.latitude,
-          _donorLocation.longitude,
-        ),
-      });
+        'createdAt': Timestamp.now(),
+      };
 
-      if (mounted) {
-        Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Donation posted successfully!")),
-        );
-      }
+      await FirebaseFirestore.instance.collection('donations').add(data);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Donation posted successfully!')),
+      );
+      Navigator.pop(context);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Error posting donation: $e")),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e')),
+      );
     } finally {
-      setState(() => _isLoading = false);
+      setState(() => _isPosting = false);
+    }
+  }
+
+  Widget _buildImagePreview() {
+    if (kIsWeb && _webImageData != null) {
+      return Image.memory(_webImageData!, height: 200, fit: BoxFit.cover);
+    } else if (_selectedImage != null) {
+      return Image.file(_selectedImage!, height: 200, fit: BoxFit.cover);
+    } else {
+      return GestureDetector(
+        onTap: _pickImage,
+        child: Container(
+          height: 200,
+          decoration: BoxDecoration(
+            color: Colors.grey.shade100,
+            border: Border.all(color: Colors.grey),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: const Center(
+            child: Icon(Icons.camera_alt, size: 50, color: Colors.grey),
+          ),
+        ),
+      );
     }
   }
 
   @override
-  void initState() {
-    super.initState();
-    _getCurrentLocation();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final inputStyle = InputDecoration(
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-      filled: true,
-      fillColor: Colors.grey.shade100,
-    );
-
+    // ignore: unused_local_variable
+    final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Create Donation"),
-        backgroundColor: ChakulaColors.primary,
+        title: const Text("Post a Donation"),
+        backgroundColor: Colors.green[700],
+        foregroundColor: Colors.white,
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            if (_isGettingLocation)
-              const LinearProgressIndicator(minHeight: 3),
-            const SizedBox(height: 12),
-            Form(
-              key: _formKey,
-              child: Column(
-                children: [
-                  TextFormField(
-                    decoration: inputStyle.copyWith(labelText: "Food Name"),
-                    validator: (value) =>
-                        value!.isEmpty ? "Enter food name" : null,
-                    onSaved: (value) => _foodName = value!.trim(),
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    decoration: inputStyle.copyWith(
-                      labelText: "Expiry Date (e.g. 2025-07-28)",
-                    ),
-                    onTap: () async {
-                      FocusScope.of(context).requestFocus(FocusNode());
-                      final picked = await showDatePicker(
-                        context: context,
-                        initialDate: DateTime.now(),
-                        firstDate: DateTime.now(),
-                        lastDate: DateTime.now().add(const Duration(days: 30)),
-                      );
-                      if (picked != null) {
-                        setState(() {
-                          _expiryDate = DateFormat('yyyy-MM-dd').format(picked);
-                        });
-                      }
-                    },
-                    readOnly: true,
-                    validator: (value) =>
-                        _expiryDate.isEmpty ? "Pick an expiry date" : null,
-                    controller: TextEditingController(text: _expiryDate),
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    decoration: inputStyle.copyWith(labelText: "Pickup Point"),
-                    initialValue: _pickupPoint,
-                    validator: (value) =>
-                        value!.isEmpty ? "Enter pickup point" : null,
-                    onSaved: (value) => _pickupPoint = value!.trim(),
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    decoration:
-                        inputStyle.copyWith(labelText: "Message to Recipients"),
-                    maxLines: 3,
-                    onSaved: (value) => _message = value!.trim(),
-                  ),
-                  const SizedBox(height: 12),
-                  _image != null
-                      ? ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: kIsWeb
-                              ? Image.network(_image!.path, height: 180)
-                              : Image.file(_image!, height: 180),
-                        )
-                      : const Text("No image selected"),
-                  const SizedBox(height: 8),
-                  ElevatedButton.icon(
-                    onPressed: _pickImage,
-                    icon: const Icon(Icons.photo),
-                    label: const Text("Select Image"),
-                  ),
-                  const SizedBox(height: 20),
-                  ElevatedButton.icon(
-                    onPressed: _isLoading ? null : _submit,
-                    icon: _isLoading
-                        ? const CircularProgressIndicator()
-                        : const Icon(Icons.send),
-                    label: Text(_isLoading ? "Posting..." : "Post Donation"),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: ChakulaColors.primary,
-                      minimumSize: const Size(double.infinity, 50),
-                    ),
-                  ),
-                  if (_isLoading)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 12.0),
-                      child: Text("Uploading image and posting...",
-                          style: TextStyle(color: Colors.grey)),
-                    )
-                ],
+        padding: const EdgeInsets.all(20),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              _buildImagePreview(),
+              const SizedBox(height: 20),
+              TextFormField(
+                controller: _foodNameController,
+                decoration: const InputDecoration(
+                  labelText: 'Food Name',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (val) =>
+                    val!.isEmpty ? 'Food name is required' : null,
               ),
-            ),
-          ],
+              const SizedBox(height: 15),
+              TextFormField(
+                controller: _expiryDateController,
+                decoration: const InputDecoration(
+                  labelText: 'Expiry Date (e.g. 2025-08-10)',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (val) =>
+                    val!.isEmpty ? 'Expiry date is required' : null,
+              ),
+              const SizedBox(height: 15),
+              TextFormField(
+                controller: _pickupPointController,
+                decoration: const InputDecoration(
+                  labelText: 'Pickup Point',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (val) =>
+                    val!.isEmpty ? 'Pickup point is required' : null,
+              ),
+              const SizedBox(height: 15),
+              TextFormField(
+                controller: _messageController,
+                decoration: const InputDecoration(
+                  labelText: 'Message (optional)',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 3,
+              ),
+              const SizedBox(height: 25),
+              _isPosting
+                  ? const CircularProgressIndicator()
+                  : SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: ElevatedButton.icon(
+                        onPressed: _submitDonation,
+                        icon: const Icon(Icons.check),
+                        label: const Text("Post Donation"),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green[700],
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                      ),
+                    ),
+            ],
+          ),
         ),
       ),
     );
