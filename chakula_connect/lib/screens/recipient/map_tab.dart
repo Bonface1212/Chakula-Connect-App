@@ -1,4 +1,4 @@
-// ignore_for_file: use_build_context_synchronously
+// ignore_for_file: use_build_context_synchronously, library_private_types_in_public_api
 
 import 'dart:async';
 import 'dart:math';
@@ -16,7 +16,7 @@ class MapTab extends StatefulWidget {
 }
 
 class _MapTabState extends State<MapTab> {
-  GoogleMapController? _mapController;
+  late GoogleMapController _mapController;
   LatLng? _recipientLocation;
   final LatLng _donorLocation = const LatLng(-1.28333, 36.81667); // Nairobi
   Set<Polyline> _polylines = {};
@@ -25,56 +25,46 @@ class _MapTabState extends State<MapTab> {
   @override
   void initState() {
     super.initState();
-    _initializeLocationAndRoute();
-  }
-
-  Future<void> _initializeLocationAndRoute() async {
-    try {
-      await _fetchCurrentLocation();
-      if (_recipientLocation != null) {
-        await _drawRoute();
-        _animateToUser();
-      }
-    } catch (e) {
-      debugPrint('Error initializing location or route: $e');
-    }
+    _fetchCurrentLocation();
   }
 
   Future<void> _fetchCurrentLocation() async {
     LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
+    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
       permission = await Geolocator.requestPermission();
-      if (permission != LocationPermission.whileInUse &&
-          permission != LocationPermission.always) {
-        return;
-      }
+      if (permission != LocationPermission.whileInUse && permission != LocationPermission.always) return;
     }
 
-    final position =
-        await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+    final position = await Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.best,
+      ),
+    );
 
     setState(() {
       _recipientLocation = LatLng(position.latitude, position.longitude);
     });
+
+    _mapController.animateCamera(CameraUpdate.newLatLngZoom(_recipientLocation!, 14));
+    _drawRoute();
   }
 
   Future<void> _drawRoute() async {
     if (_recipientLocation == null) return;
 
-    final polylinePoints = PolylinePoints(apiKey: dotenv.env['GOOGLE_API_KEY'] ?? '');
+    final polylinePoints = PolylinePoints(apiKey: '');
 
     final result = await polylinePoints.getRouteBetweenCoordinates(
-      RouteRequest(
+      request: RouteRequest(
         origin: PointLatLng(_recipientLocation!.latitude, _recipientLocation!.longitude),
         destination: PointLatLng(_donorLocation.latitude, _donorLocation.longitude),
         travelMode: TravelMode.driving,
+        apiKey: dotenv.env['GOOGLE_MAPS_API_KEY']!,
       ),
     );
 
     if (result.status == 'OK' && result.points.isNotEmpty) {
-      final points =
-          result.points.map((e) => LatLng(e.latitude, e.longitude)).toList();
+      final points = result.points.map((e) => LatLng(e.latitude, e.longitude)).toList();
 
       setState(() {
         _polylines = {
@@ -97,20 +87,12 @@ class _MapTabState extends State<MapTab> {
     }
   }
 
-  void _animateToUser() {
-    if (_recipientLocation != null && _mapController != null) {
-      _mapController!.animateCamera(
-        CameraUpdate.newLatLngZoom(_recipientLocation!, 14),
-      );
-    }
-  }
-
   double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
     const double p = 0.017453292519943295;
     final double a = 0.5 -
         cos((lat2 - lat1) * p) / 2 +
         cos(lat1 * p) * cos(lat2 * p) * (1 - cos((lon2 - lon1) * p)) / 2;
-    return 12742 * asin(sqrt(a)) * 1000; // meters
+    return 12742 * asin(sqrt(a)) * 1000;
   }
 
   @override
@@ -169,4 +151,6 @@ class _MapTabState extends State<MapTab> {
             ),
     );
   }
+  
+  RouteRequest({required PointLatLng origin, required PointLatLng destination, required TravelMode travelMode, required String apiKey}) {}
 }
