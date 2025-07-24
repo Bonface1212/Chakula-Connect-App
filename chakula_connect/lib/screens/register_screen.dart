@@ -12,8 +12,9 @@ import 'package:geocoding/geocoding.dart';
 import 'package:intl_phone_field/intl_phone_field.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 
-import 'donor_dashboard.dart';
-import 'recipient_dashboard.dart';
+import 'donors/donor_dashboard.dart';
+import 'recipient/recipient_dashboard.dart';
+
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});

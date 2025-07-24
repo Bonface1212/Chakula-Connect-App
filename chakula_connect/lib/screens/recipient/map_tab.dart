@@ -1,313 +1,172 @@
-// ignore_for_file: use_build_context_synchronously, unused_import, unused_field
+// ignore_for_file: use_build_context_synchronously
 
 import 'dart:async';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:location/location.dart' as loc;
-import 'package:geocoding/geocoding.dart' as geocoding;
-import 'package:permission_handler/permission_handler.dart' as perm;
+import 'package:geolocator/geolocator.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-class MapTab extends ConsumerStatefulWidget {
+class MapTab extends StatefulWidget {
   const MapTab({super.key});
 
   @override
-  ConsumerState<MapTab> createState() => _MapTabState();
+  _MapTabState createState() => _MapTabState();
 }
 
-class _MapTabState extends ConsumerState<MapTab> {
-  final Completer<GoogleMapController> _mapController = Completer();
-  final loc.Location _location = loc.Location();
-  loc.LocationData? _currentLocation;
-  bool _locationPermissionGranted = false;
-  bool _useFallback = false;
-  bool _hasError = false;
-  LatLng? _manualLocation;
-  String? _selectedCategory;
-  Set<Marker> _markers = {};
-  StreamSubscription<QuerySnapshot>? _donationSubscription;
+class _MapTabState extends State<MapTab> {
+  GoogleMapController? _mapController;
+  LatLng? _recipientLocation;
+  final LatLng _donorLocation = const LatLng(-1.28333, 36.81667); // Nairobi
   Set<Polyline> _polylines = {};
-
-  static const LatLng _fallbackLocation = LatLng(-1.2921, 36.8219); // Nairobi
+  double? _distanceInMeters;
 
   @override
   void initState() {
     super.initState();
-    _initLocation();
+    _initializeLocationAndRoute();
   }
 
-  @override
-  void dispose() {
-    _donationSubscription?.cancel();
-    super.dispose();
-  }
-
-  Future<void> _initLocation() async {
+  Future<void> _initializeLocationAndRoute() async {
     try {
-      final serviceEnabled = await _location.serviceEnabled();
-      if (!serviceEnabled && !await _location.requestService()) {
-        _handleLocationError();
+      await _fetchCurrentLocation();
+      if (_recipientLocation != null) {
+        await _drawRoute();
+        _animateToUser();
+      }
+    } catch (e) {
+      debugPrint('Error initializing location or route: $e');
+    }
+  }
+
+  Future<void> _fetchCurrentLocation() async {
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      permission = await Geolocator.requestPermission();
+      if (permission != LocationPermission.whileInUse &&
+          permission != LocationPermission.always) {
         return;
       }
+    }
 
-      final permission = await _location.hasPermission();
-      if (permission == loc.PermissionStatus.denied &&
-          await _location.requestPermission() != loc.PermissionStatus.granted) {
-        _handleLocationError();
-        return;
-      }
+    final position =
+        await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
 
-      _locationPermissionGranted = true;
-      final locationData = await _location.getLocation();
+    setState(() {
+      _recipientLocation = LatLng(position.latitude, position.longitude);
+    });
+  }
+
+  Future<void> _drawRoute() async {
+    if (_recipientLocation == null) return;
+
+    final polylinePoints = PolylinePoints(apiKey: dotenv.env['GOOGLE_API_KEY'] ?? '');
+
+    final result = await polylinePoints.getRouteBetweenCoordinates(
+      RouteRequest(
+        origin: PointLatLng(_recipientLocation!.latitude, _recipientLocation!.longitude),
+        destination: PointLatLng(_donorLocation.latitude, _donorLocation.longitude),
+        travelMode: TravelMode.driving,
+      ),
+    );
+
+    if (result.status == 'OK' && result.points.isNotEmpty) {
+      final points =
+          result.points.map((e) => LatLng(e.latitude, e.longitude)).toList();
 
       setState(() {
-        _currentLocation = locationData;
-        _useFallback = false;
-        _hasError = false;
-      });
-
-      _listenToDonations();
-    } catch (e) {
-      _handleLocationError();
-    }
-  }
-
-  void _handleLocationError() {
-    setState(() {
-      _useFallback = true;
-      _hasError = true;
-      _currentLocation = loc.LocationData.fromMap({
-        'latitude': _fallbackLocation.latitude,
-        'longitude': _fallbackLocation.longitude,
-      });
-    });
-    _listenToDonations();
-  }
-
-  void _listenToDonations() {
-    _donationSubscription?.cancel();
-
-    _donationSubscription = FirebaseFirestore.instance
-        .collection('donations')
-        .where('isClaimed', isEqualTo: false)
-        .snapshots()
-        .listen((snapshot) {
-      Set<Marker> newMarkers = {};
-      for (var doc in snapshot.docs) {
-        final data = doc.data();
-        final category = data['category'] as String?;
-        final geo = data['location'];
-        if (geo == null) continue;
-
-        final lat = geo['latitude'];
-        final lng = geo['longitude'];
-        if (lat == null || lng == null) continue;
-
-        if (_selectedCategory == null || _selectedCategory == category) {
-          newMarkers.add(
-            Marker(
-              markerId: MarkerId(doc.id),
-              position: LatLng(lat, lng),
-              infoWindow: InfoWindow(
-                title: data['title'] ?? 'Donation',
-                snippet: category ?? 'No Category',
-              ),
-              onTap: () => _drawRouteTo(lat, lng),
-            ),
-          );
-        }
-      }
-      setState(() => _markers = newMarkers);
-    });
-  }
-
-  Future<void> _drawRouteTo(double lat, double lng) async {
-    final userLatLng =
-        _manualLocation ??
-        LatLng(
-          _currentLocation?.latitude ?? _fallbackLocation.latitude,
-          _currentLocation?.longitude ?? _fallbackLocation.longitude,
+        _polylines = {
+          Polyline(
+            polylineId: const PolylineId("route"),
+            points: points,
+            color: Colors.green,
+            width: 5,
+          ),
+        };
+        _distanceInMeters = _calculateDistance(
+          _recipientLocation!.latitude,
+          _recipientLocation!.longitude,
+          _donorLocation.latitude,
+          _donorLocation.longitude,
         );
-
-    final donationLatLng = LatLng(lat, lng);
-
-    setState(() {
-      _polylines = {
-        Polyline(
-          polylineId: const PolylineId('route'),
-          color: Colors.green,
-          width: 5,
-          points: [userLatLng, donationLatLng],
-        ),
-      };
-    });
-
-    final controller = await _mapController.future;
-    controller.animateCamera(
-      CameraUpdate.newLatLngBounds(
-        LatLngBounds(
-          southwest: LatLng(
-            userLatLng.latitude < donationLatLng.latitude
-                ? userLatLng.latitude
-                : donationLatLng.latitude,
-            userLatLng.longitude < donationLatLng.longitude
-                ? userLatLng.longitude
-                : donationLatLng.longitude,
-          ),
-          northeast: LatLng(
-            userLatLng.latitude > donationLatLng.latitude
-                ? userLatLng.latitude
-                : donationLatLng.latitude,
-            userLatLng.longitude > donationLatLng.longitude
-                ? userLatLng.longitude
-                : donationLatLng.longitude,
-          ),
-        ),
-        100,
-      ),
-    );
-  }
-
-  Future<void> _promptManualLocationInput() async {
-    final controller = TextEditingController();
-    final result = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Enter your location"),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(hintText: "e.g. Nairobi, Kenya"),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(null),
-            child: const Text("Cancel"),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
-            child: const Text("Submit"),
-          ),
-        ],
-      ),
-    );
-
-    if (result != null && result.isNotEmpty) {
-      try {
-        final locations = await geocoding.locationFromAddress(result);
-        if (locations.isNotEmpty) {
-          final found = locations.first;
-          setState(() {
-            _manualLocation = LatLng(found.latitude, found.longitude);
-            _useFallback = true;
-            _hasError = false;
-          });
-          _listenToDonations();
-        }
-      } catch (e) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text("Location not found")));
-      }
+      });
+    } else {
+      debugPrint("Failed to draw polyline: ${result.errorMessage}");
     }
   }
 
-  Widget _buildErrorUI() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Text("Unable to load map."),
-          const SizedBox(height: 10),
-          const Text("Please enable location and check permission"),
-          const SizedBox(height: 20),
-          ElevatedButton(
-            onPressed: _promptManualLocationInput,
-            child: const Text("Enter Location Manually"),
-          ),
-          const SizedBox(height: 10),
-          ElevatedButton(onPressed: _initLocation, child: const Text("Retry")),
-        ],
-      ),
-    );
+  void _animateToUser() {
+    if (_recipientLocation != null && _mapController != null) {
+      _mapController!.animateCamera(
+        CameraUpdate.newLatLngZoom(_recipientLocation!, 14),
+      );
+    }
+  }
+
+  double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+    const double p = 0.017453292519943295;
+    final double a = 0.5 -
+        cos((lat2 - lat1) * p) / 2 +
+        cos(lat1 * p) * cos(lat2 * p) * (1 - cos((lon2 - lon1) * p)) / 2;
+    return 12742 * asin(sqrt(a)) * 1000; // meters
   }
 
   @override
   Widget build(BuildContext context) {
-    const isDarkMode = false;
-
-    final isReady = _currentLocation != null || _manualLocation != null;
-
-    if (!isReady) {
-      return _hasError
-          ? _buildErrorUI()
-          : const Center(child: CircularProgressIndicator());
-    }
-
-    final initialPosition =
-        _manualLocation ??
-        LatLng(
-          _currentLocation?.latitude ?? _fallbackLocation.latitude,
-          _currentLocation?.longitude ?? _fallbackLocation.longitude,
-        );
-
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Donation Map'),
-        backgroundColor: isDarkMode ? Colors.black : Colors.green,
-      ),
-      body: Column(
-        children: [
-          SizedBox(
-            height: 50,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 8),
+      body: _recipientLocation == null
+          ? const Center(child: CircularProgressIndicator())
+          : Stack(
               children: [
-                FilterChip(
-                  label: const Text("All"),
-                  selected: _selectedCategory == null,
-                  onSelected: (_) => setState(() => _selectedCategory = null),
-                ),
-                const SizedBox(width: 8),
-                ...["Fruits", "Vegetables", "Grains", "Other"].map((cat) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: FilterChip(
-                      label: Text(cat),
-                      selected: _selectedCategory == cat,
-                      onSelected: (_) =>
-                          setState(() => _selectedCategory = cat),
+                GoogleMap(
+                  initialCameraPosition: CameraPosition(
+                    target: _recipientLocation!,
+                    zoom: 14,
+                  ),
+                  myLocationEnabled: true,
+                  polylines: _polylines,
+                  markers: {
+                    Marker(
+                      markerId: const MarkerId("recipient"),
+                      position: _recipientLocation!,
+                      infoWindow: const InfoWindow(title: "You"),
                     ),
-                  );
-                }),
+                    Marker(
+                      markerId: const MarkerId("donor"),
+                      position: _donorLocation,
+                      infoWindow: const InfoWindow(title: "Donor Location"),
+                    ),
+                  },
+                  onMapCreated: (controller) => _mapController = controller,
+                ),
+                Positioned(
+                  top: 40,
+                  left: 20,
+                  right: 20,
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.9),
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.1),
+                          blurRadius: 10,
+                        ),
+                      ],
+                    ),
+                    child: Text(
+                      _distanceInMeters != null
+                          ? "Distance to Donor: ${(_distanceInMeters! / 1000).toStringAsFixed(2)} km"
+                          : "Calculating distance...",
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
               ],
             ),
-          ),
-          Expanded(
-            child: GoogleMap(
-              initialCameraPosition: CameraPosition(
-                target: initialPosition,
-                zoom: 14,
-              ),
-              myLocationEnabled: !_useFallback,
-              myLocationButtonEnabled: true,
-              markers: _markers,
-              polylines: _polylines,
-              onMapCreated: (controller) {
-                if (!_mapController.isCompleted) {
-                  _mapController.complete(controller);
-                }
-              },
-            ),
-          ),
-          if (_markers.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text("No donations nearby in this category."),
-            ),
-        ],
-      ),
     );
   }
 }

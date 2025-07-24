@@ -62,6 +62,12 @@
 
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+    
+	<string>NSLocationWhenInUseUsageDescription</string>
+	<key>Want to display location on map, and track it</key>
+
+    <string>NSLocationAlwaysAndWhenInUseUsageDescription</string>
+	<key>Want to display location on map, and track it</key>
 
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>

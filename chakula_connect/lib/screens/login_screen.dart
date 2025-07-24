@@ -3,8 +3,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../main.dart'; // Make sure this is the correct relative path
-import 'donor_dashboard.dart';
-import 'recipient_dashboard.dart';
+import 'donors/donor_dashboard.dart';
+import 'recipient/recipient_dashboard.dart';
+
 import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {

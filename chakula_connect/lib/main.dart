@@ -12,8 +12,8 @@ import 'firebase_options.dart';
 // Screens
 import 'screens/welcome_screen.dart';
 import 'screens/login_screen.dart';
-import 'screens/donor_dashboard.dart';
-import 'screens/recipient_dashboard.dart';
+import 'screens/donors/donor_dashboard.dart';
+import 'screens/recipient/recipient_dashboard.dart';
 
 // Theme controller using ValueNotifier
 final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.light);
@@ -23,7 +23,7 @@ Future<void> main() async {
 
   try {
     // ✅ Load environment variables securely
-    await dotenv.load(fileName: ".env");
+    await dotenv.load(fileName: "asset.env");
   } catch (e) {
     debugPrint("⚠️ Failed to load .env: $e");
   }

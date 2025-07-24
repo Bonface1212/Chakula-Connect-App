@@ -2,6 +2,8 @@
     package="com.example.chakula_connect">
 
     <!-- ✅ Required permissions -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
@@ -20,11 +22,7 @@
         android:label="chakula_connect"
         android:icon="@mipmap/ic_launcher">
 
-        <!-- ✅ Google Maps API Key -->
-        <meta-data
-            android:name="com.google.android.geo.API_KEY"
-            android:value="AIzaSyCI_I9I8n03XY-17h-outvh0PVUvieMQdc" />
-
+       
         <!-- Flutter Theme and Launching -->
         <meta-data
             android:name="flutterEmbedding"
@@ -43,6 +41,10 @@
             <meta-data
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme" />
+             <!-- ✅ Google Maps API Key -->
+            <meta-data
+                android:name="com.google.android.geo.API_KEY"
+                android:value="AIzaSyCI_I9I8n03XY-17h-outvh0PVUvieMQdc" />
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
