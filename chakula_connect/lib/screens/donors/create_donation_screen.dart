@@ -2,6 +2,7 @@
 
 import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -54,25 +55,35 @@ class _CreateDonationScreenState extends State<CreateDonationScreen> {
     }
   }
 
-  Future<String?> _uploadImageToFirebaseStorage() async {
-    try {
-      final storage = FirebaseStorage.instance;
-      final String fileId = const Uuid().v4();
+Future<String?> _uploadImageToFirebaseStorage() async {
+  try {
+    final storage = FirebaseStorage.instance;
+    final String fileId = const Uuid().v4();
+    final ref = storage.ref().child('donation_images/$fileId.jpg');
 
-      if (kIsWeb && _webImageData != null) {
-        final ref = storage.ref().child('donation_images/$fileId.jpg');
-        await ref.putData(_webImageData!);
+    if (kIsWeb && _webImageData != null) {
+      final uploadTask = await ref.putData(_webImageData!);
+      if (uploadTask.state == TaskState.success) {
         return await ref.getDownloadURL();
-      } else if (_selectedImage != null) {
-        final ref = storage.ref().child('donation_images/$fileId.jpg');
-        await ref.putFile(_selectedImage!);
-        return await ref.getDownloadURL();
+      } else {
+        throw Exception('Web image upload failed');
       }
-    } catch (e) {
-      debugPrint('Firebase Storage Upload Error: $e');
+    } else if (_selectedImage != null) {
+      final uploadTask = await ref.putFile(_selectedImage!);
+      if (uploadTask.state == TaskState.success) {
+        return await ref.getDownloadURL();
+      } else {
+        throw Exception('Mobile image upload failed');
+      }
+    } else {
+      throw Exception('No image selected');
     }
-    return null;
+  } catch (e) {
+    debugPrint('Firebase Storage Upload Error: $e');
+    rethrow;
   }
+}
+
 
   Future<void> _submitDonation() async {
     if (!_formKey.currentState!.validate() ||
@@ -90,16 +101,22 @@ class _CreateDonationScreenState extends State<CreateDonationScreen> {
       if (imageUrl == null) {
         throw Exception('Image upload failed.');
       }
+final user = FirebaseAuth.instance.currentUser;
+if (user == null) {
+  throw Exception('User not signed in.');
+}
 
-      final data = {
-        'foodName': _foodNameController.text.trim(),
-        'expiryDate': _expiryDateController.text.trim(),
-        'pickupPoint': _pickupPointController.text.trim(),
-        'message': _messageController.text.trim(),
-        'category': _selectedCategory ?? 'Other',
-        'imageUrl': imageUrl,
-        'createdAt': Timestamp.now(),
-      };
+final data = {
+  'foodName': _foodNameController.text.trim(),
+  'expiryDate': _expiryDateController.text.trim(),
+  'pickupPoint': _pickupPointController.text.trim(),
+  'message': _messageController.text.trim(),
+  'category': _selectedCategory ?? 'Other',
+  'imageUrl': imageUrl,
+  'donorId': user.uid, 
+  'createdAt': Timestamp.now(),
+};
+
 
       await FirebaseFirestore.instance.collection('donations').add(data);
 
