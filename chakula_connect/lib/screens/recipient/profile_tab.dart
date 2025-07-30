@@ -33,7 +33,7 @@ class _ProfileTabState extends ConsumerState<ProfileTab> {
       nameController.text = data['fullName'] ?? '';
       usernameController.text = data['username'] ?? '';
       selectedRole = data['role'] ?? 'Recipient';
-      profileImageUrl = data['profileImageUrl'] ?? null;
+      profileImageUrl = data['profileImageUrl'];
     }
     setState(() => isLoading = false);
   }

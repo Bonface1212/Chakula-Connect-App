@@ -1,13 +1,12 @@
 // ignore_for_file: use_build_context_synchronously
 
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 
 class CreateDonationScreen extends StatefulWidget {
   const CreateDonationScreen({super.key});
@@ -25,8 +24,10 @@ class _CreateDonationScreenState extends State<CreateDonationScreen> {
 
   File? _selectedImage;
   Uint8List? _webImageData;
-  UploadTask? _uploadTask;
+  String? _selectedCategory;
   bool _isPosting = false;
+
+  final List<String> _categories = ['Cooked', 'Uncooked', 'Snacks', 'Beverages', 'Other'];
 
   Future<void> _pickImage() async {
     final picker = ImagePicker();
@@ -41,20 +42,36 @@ class _CreateDonationScreenState extends State<CreateDonationScreen> {
     }
   }
 
-  Future<String?> _uploadImage() async {
-    final fileName = const Uuid().v4();
-    final ref = FirebaseStorage.instance.ref('donation_images/$fileName.jpg');
-
-    if (kIsWeb && _webImageData != null) {
-      _uploadTask = ref.putData(_webImageData!);
-    } else if (_selectedImage != null) {
-      _uploadTask = ref.putFile(_selectedImage!);
-    } else {
-      return null;
+  Future<void> _pickExpiryDate() async {
+    DateTime? date = await showDatePicker(
+      context: context,
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      initialDate: DateTime.now(),
+    );
+    if (date != null) {
+      _expiryDateController.text = "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
     }
+  }
 
-    final snapshot = await _uploadTask!.whenComplete(() {});
-    return await snapshot.ref.getDownloadURL();
+  Future<String?> _uploadImageToFirebaseStorage() async {
+    try {
+      final storage = FirebaseStorage.instance;
+      final String fileId = const Uuid().v4();
+
+      if (kIsWeb && _webImageData != null) {
+        final ref = storage.ref().child('donation_images/$fileId.jpg');
+        await ref.putData(_webImageData!);
+        return await ref.getDownloadURL();
+      } else if (_selectedImage != null) {
+        final ref = storage.ref().child('donation_images/$fileId.jpg');
+        await ref.putFile(_selectedImage!);
+        return await ref.getDownloadURL();
+      }
+    } catch (e) {
+      debugPrint('Firebase Storage Upload Error: $e');
+    }
+    return null;
   }
 
   Future<void> _submitDonation() async {
@@ -69,13 +86,17 @@ class _CreateDonationScreenState extends State<CreateDonationScreen> {
     setState(() => _isPosting = true);
 
     try {
-      final imageUrl = await _uploadImage();
+      final imageUrl = await _uploadImageToFirebaseStorage();
+      if (imageUrl == null) {
+        throw Exception('Image upload failed.');
+      }
 
       final data = {
         'foodName': _foodNameController.text.trim(),
         'expiryDate': _expiryDateController.text.trim(),
         'pickupPoint': _pickupPointController.text.trim(),
         'message': _messageController.text.trim(),
+        'category': _selectedCategory ?? 'Other',
         'imageUrl': imageUrl,
         'createdAt': Timestamp.now(),
       };
@@ -122,6 +143,7 @@ class _CreateDonationScreenState extends State<CreateDonationScreen> {
   Widget build(BuildContext context) {
     // ignore: unused_local_variable
     final theme = Theme.of(context);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text("Post a Donation"),
@@ -146,14 +168,35 @@ class _CreateDonationScreenState extends State<CreateDonationScreen> {
                     val!.isEmpty ? 'Food name is required' : null,
               ),
               const SizedBox(height: 15),
-              TextFormField(
-                controller: _expiryDateController,
+              GestureDetector(
+                onTap: _pickExpiryDate,
+                child: AbsorbPointer(
+                  child: TextFormField(
+                    controller: _expiryDateController,
+                    decoration: const InputDecoration(
+                      labelText: 'Expiry Date',
+                      border: OutlineInputBorder(),
+                      suffixIcon: Icon(Icons.calendar_today),
+                    ),
+                    validator: (val) =>
+                        val!.isEmpty ? 'Expiry date is required' : null,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 15),
+              DropdownButtonFormField<String>(
+                value: _selectedCategory,
+                items: _categories
+                    .map((cat) =>
+                        DropdownMenuItem(value: cat, child: Text(cat)))
+                    .toList(),
+                onChanged: (val) => setState(() => _selectedCategory = val),
                 decoration: const InputDecoration(
-                  labelText: 'Expiry Date (e.g. 2025-08-10)',
+                  labelText: 'Category',
                   border: OutlineInputBorder(),
                 ),
                 validator: (val) =>
-                    val!.isEmpty ? 'Expiry date is required' : null,
+                    val == null ? 'Select a category' : null,
               ),
               const SizedBox(height: 15),
               TextFormField(

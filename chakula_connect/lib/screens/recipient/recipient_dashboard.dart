@@ -18,7 +18,7 @@ class _RecipientDashboardState extends ConsumerState<RecipientDashboard> {
 
   final List<Widget> _tabs = const [
     HomeTab(),
-    MapTab(),
+    MapTab(claimId: '',),
     ClaimsTab(),
     ProfileTab(),
   ];

@@ -1,65 +1,112 @@
-// ignore_for_file: use_build_context_synchronously, library_private_types_in_public_api
+// ignore_for_file: use_build_context_synchronously, depend_on_referenced_packages
 
 import 'dart:async';
 import 'dart:math';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+// ignore: unused_import
+import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
 
 class MapTab extends StatefulWidget {
-  const MapTab({super.key});
+  final String claimId;
+  const MapTab({super.key, required this.claimId});
 
   @override
-  _MapTabState createState() => _MapTabState();
+  State<MapTab> createState() => _MapTabState();
 }
 
 class _MapTabState extends State<MapTab> {
-  late GoogleMapController _mapController;
+  GoogleMapController? _mapController;
   LatLng? _recipientLocation;
-  final LatLng _donorLocation = const LatLng(-1.28333, 36.81667); // Nairobi
+  LatLng? _riderLocation;
+  LatLng? _donorLocation;
   Set<Polyline> _polylines = {};
   double? _distanceInMeters;
+  StreamSubscription<DocumentSnapshot>? _claimSub;
 
   @override
   void initState() {
     super.initState();
     _fetchCurrentLocation();
+    _listenToClaim();
   }
 
   Future<void> _fetchCurrentLocation() async {
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
-      permission = await Geolocator.requestPermission();
-      if (permission != LocationPermission.whileInUse && permission != LocationPermission.always) return;
+    final permission = await Geolocator.requestPermission();
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      return;
     }
 
-    final position = await Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.best,
-      ),
-    );
+    final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.best));
 
-    setState(() {
-      _recipientLocation = LatLng(position.latitude, position.longitude);
+    setState(() => _recipientLocation = LatLng(pos.latitude, pos.longitude));
+    _mapController?.animateCamera(CameraUpdate.newLatLngZoom(_recipientLocation!, 14));
+  }
+
+  void _listenToClaim() {
+    final docRef = FirebaseFirestore.instance.collection('claims').doc(widget.claimId);
+
+    _claimSub = docRef.snapshots().listen((doc) {
+      if (!doc.exists) return;
+
+      final data = doc.data() as Map<String, dynamic>;
+      final riderLoc = data['riderLocation'];
+      final donorLoc = data['donorLocation'];
+      final status = data['status'];
+
+      if (riderLoc != null && riderLoc['lat'] != null && riderLoc['lng'] != null) {
+        setState(() => _riderLocation = LatLng(riderLoc['lat'], riderLoc['lng']));
+        _drawRoute();
+      }
+
+      if (donorLoc != null && donorLoc['lat'] != null && donorLoc['lng'] != null) {
+        setState(() => _donorLocation = LatLng(donorLoc['lat'], donorLoc['lng']));
+      }
+
+      if (status == 'arrived') {
+  
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text("Rider has arrived"),
+            content: const Text("Your delivery rider has arrived at the pickup point."),
+            actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("OK"))],
+          ),
+        );
+      }
     });
-
-    _mapController.animateCamera(CameraUpdate.newLatLngZoom(_recipientLocation!, 14));
-    _drawRoute();
   }
 
   Future<void> _drawRoute() async {
-    if (_recipientLocation == null) return;
+    if (_recipientLocation == null || _riderLocation == null) return;
 
-    final polylinePoints = PolylinePoints(apiKey: '');
+    final apiKey = dotenv.env['GOOGLE_MAPS_API_KEY'];
+    if (apiKey == null || apiKey.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Google Maps API key missing.")),
+      );
+      return;
+    }
 
+    final polylinePoints = PolylinePoints(apiKey: apiKey);
     final result = await polylinePoints.getRouteBetweenCoordinates(
       request: RouteRequest(
-        origin: PointLatLng(_recipientLocation!.latitude, _recipientLocation!.longitude),
-        destination: PointLatLng(_donorLocation.latitude, _donorLocation.longitude),
+        origin: PointLatLng(
+          _riderLocation!.latitude,
+          _riderLocation!.longitude,
+        ),
+        destination: PointLatLng(
+          _recipientLocation!.latitude,
+          _recipientLocation!.longitude,
+        ),
         travelMode: TravelMode.driving,
-        apiKey: dotenv.env['GOOGLE_MAPS_API_KEY']!,
+        apiKey: apiKey,
       ),
     );
 
@@ -75,11 +122,12 @@ class _MapTabState extends State<MapTab> {
             width: 5,
           ),
         };
+
         _distanceInMeters = _calculateDistance(
+          _riderLocation!.latitude,
+          _riderLocation!.longitude,
           _recipientLocation!.latitude,
           _recipientLocation!.longitude,
-          _donorLocation.latitude,
-          _donorLocation.longitude,
         );
       });
     } else {
@@ -88,69 +136,91 @@ class _MapTabState extends State<MapTab> {
   }
 
   double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
-    const double p = 0.017453292519943295;
-    final double a = 0.5 -
+    const p = 0.017453292519943295;
+    final a = 0.5 -
         cos((lat2 - lat1) * p) / 2 +
         cos(lat1 * p) * cos(lat2 * p) * (1 - cos((lon2 - lon1) * p)) / 2;
     return 12742 * asin(sqrt(a)) * 1000;
   }
 
   @override
+  void dispose() {
+    _claimSub?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    if (_recipientLocation == null) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
     return Scaffold(
-      body: _recipientLocation == null
-          ? const Center(child: CircularProgressIndicator())
-          : Stack(
-              children: [
-                GoogleMap(
-                  initialCameraPosition: CameraPosition(
-                    target: _recipientLocation!,
-                    zoom: 14,
-                  ),
-                  myLocationEnabled: true,
-                  polylines: _polylines,
-                  markers: {
-                    Marker(
-                      markerId: const MarkerId("recipient"),
-                      position: _recipientLocation!,
-                      infoWindow: const InfoWindow(title: "You"),
-                    ),
-                    Marker(
-                      markerId: const MarkerId("donor"),
-                      position: _donorLocation,
-                      infoWindow: const InfoWindow(title: "Donor Location"),
-                    ),
-                  },
-                  onMapCreated: (controller) => _mapController = controller,
-                ),
-                Positioned(
-                  top: 40,
-                  left: 20,
-                  right: 20,
-                  child: Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.9),
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.1),
-                          blurRadius: 10,
-                        ),
-                      ],
-                    ),
-                    child: Text(
-                      _distanceInMeters != null
-                          ? "Distance to Donor: ${(_distanceInMeters! / 1000).toStringAsFixed(2)} km"
-                          : "Calculating distance...",
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ),
-              ],
+      body: Stack(
+        children: [
+          GoogleMap(
+            initialCameraPosition: CameraPosition(
+              target: _recipientLocation!,
+              zoom: 14,
             ),
+            myLocationEnabled: true,
+            myLocationButtonEnabled: true,
+            polylines: _polylines,
+            markers: {
+              if (_recipientLocation != null)
+                Marker(
+                  markerId: const MarkerId("recipient"),
+                  position: _recipientLocation!,
+                  infoWindow: const InfoWindow(title: "You (Recipient)"),
+                ),
+              if (_donorLocation != null)
+                Marker(
+                  markerId: const MarkerId("donor"),
+                  position: _donorLocation!,
+                  infoWindow: const InfoWindow(title: "Donor Location"),
+                ),
+              if (_riderLocation != null)
+                Marker(
+                  markerId: const MarkerId("rider"),
+                  position: _riderLocation!,
+                  icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+                  infoWindow: const InfoWindow(title: "Rider"),
+                ),
+            },
+            onMapCreated: (controller) => _mapController = controller,
+          ),
+          Positioned(
+            top: 40,
+            left: 20,
+            right: 20,
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white.withAlpha((0.9 * 255).toInt()),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withAlpha((0.1 * 255).toInt()),
+                    blurRadius: 10,
+                  ),
+                ],
+              ),
+              child: Text(
+                _distanceInMeters != null
+                    ? "Distance to Rider: ${(_distanceInMeters! / 1000).toStringAsFixed(2)} km"
+                    : "Waiting for rider location...",
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
-  
-  RouteRequest({required PointLatLng origin, required PointLatLng destination, required TravelMode travelMode, required String apiKey}) {}
+}
+
+// ignore: non_constant_identifier_names, strict_top_level_inference
+RouteRequest({required PointLatLng origin, required PointLatLng destination, required TravelMode travelMode, required String apiKey}) {
 }

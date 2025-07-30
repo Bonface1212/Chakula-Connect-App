@@ -57,7 +57,7 @@ class _HomeTabState extends State<HomeTab> {
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   itemCount: categories.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 10),
+                  separatorBuilder: (_, _) => const SizedBox(width: 10),
                   itemBuilder: (context, index) {
                     final category = categories.elementAt(index);
                     final isSelected = selectedCategory == category;
@@ -114,6 +114,7 @@ class _HomeTabState extends State<HomeTab> {
                         borderRadius: BorderRadius.circular(24),
                         boxShadow: [
                           BoxShadow(
+                            // ignore: deprecated_member_use
                             color: Colors.black.withOpacity(0.05),
                             blurRadius: 12,
                             offset: const Offset(0, 6),
@@ -131,7 +132,7 @@ class _HomeTabState extends State<HomeTab> {
                               height: isLargeScreen ? 250 : 200,
                               width: double.infinity,
                               fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => Container(
+                              errorBuilder: (_, _, ___) => Container(
                                 color: Colors.grey[300],
                                 height: isLargeScreen ? 250 : 200,
                                 alignment: Alignment.center,

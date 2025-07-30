@@ -1,20 +1,11 @@
-// ignore_for_file: use_build_context_synchronously
+// ignore_for_file: use_build_context_synchronously, unused_field
 import 'dart:io';
-import 'dart:typed_data';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:geocoding/geocoding.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:intl_phone_field/intl_phone_field.dart';
-import 'package:connectivity_plus/connectivity_plus.dart';
-
-import 'donors/donor_dashboard.dart';
-import 'recipient/recipient_dashboard.dart';
-
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -25,191 +16,105 @@ class RegisterScreen extends StatefulWidget {
 
 class _RegisterScreenState extends State<RegisterScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _auth = FirebaseAuth.instance;
-  final _firestore = FirebaseFirestore.instance;
 
+  // Controllers
   final _fullNameController = TextEditingController();
   final _usernameController = TextEditingController();
   final _emailController = TextEditingController();
+  final _phoneController = TextEditingController();
   final _nationalIdController = TextEditingController();
+  final _licenseController = TextEditingController();
+  final _locationController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
-  final _locationController = TextEditingController();
 
-  String _phone = '';
-  String? _role;
+  File? _profileImageFile;
+  File? _idImageFile;
+  String? _role = 'Donor';
+  String? _phone;
   bool _isPasswordVisible = false;
   bool _isConfirmPasswordVisible = false;
-  bool _isLoading = false;
   bool _agreedToTerms = false;
-  File? _profileImageFile;
-  Uint8List? _webImageData;
+  bool _isLoading = false;
 
-  Future<void> _pickImage() async {
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(source: ImageSource.gallery);
+  Future<void> _pickImage({bool isIdPhoto = false}) async {
+    final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
     if (picked != null) {
-      if (kIsWeb) {
-        final data = await picked.readAsBytes();
-        setState(() => _webImageData = data);
-      } else {
-        setState(() => _profileImageFile = File(picked.path));
-      }
+      final file = File(picked.path);
+      setState(() {
+        if (isIdPhoto) {
+          _idImageFile = file;
+        } else {
+          _profileImageFile = file;
+        }
+      });
     }
   }
 
-  Future<void> _detectLocation() async {
-    try {
-      final permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Location permission denied")),
-        );
-        return;
-      }
+  Future<String> _uploadToFirebase(File file, String path) async {
+    final ref = FirebaseStorage.instance.ref().child(path);
+    await ref.putFile(file);
+    return await ref.getDownloadURL();
+  }
 
-      final position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-      final placemarks = await placemarkFromCoordinates(position.latitude, position.longitude);
-      final place = placemarks.first;
-      final address = "${place.locality}, ${place.administrativeArea}, ${place.country}";
-      setState(() => _locationController.text = address);
+  Future<void> _register() async {
+    if (!_formKey.currentState!.validate()) return;
+    if (!_agreedToTerms) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please agree to the Terms and Conditions")),
+      );
+      return;
+    }
+    if (_profileImageFile == null || _idImageFile == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please upload both Profile and ID images")),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      final cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+        email: _emailController.text.trim(),
+        password: _passwordController.text.trim(),
+      );
+
+      String profileUrl = await _uploadToFirebase(_profileImageFile!, "users/${cred.user!.uid}/profile.jpg");
+      String idUrl = await _uploadToFirebase(_idImageFile!, "users/${cred.user!.uid}/id.jpg");
+
+      await FirebaseFirestore.instance.collection('users').doc(cred.user!.uid).set({
+        'uid': cred.user!.uid,
+        'fullName': _fullNameController.text.trim(),
+        'username': _usernameController.text.trim(),
+        'email': _emailController.text.trim(),
+        'phone': _phone,
+        'role': _role,
+        'nationalId': _nationalIdController.text.trim(),
+        'driverLicense': _role == 'Rider' ? _licenseController.text.trim() : null,
+        'location': _locationController.text.trim(),
+        'profileImageUrl': profileUrl,
+        'idImageUrl': idUrl,
+        'createdAt': Timestamp.now(),
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Registration successful!")),
+      );
+
+      Navigator.pushReplacementNamed(context, '/login');
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Location error: ${e.toString()}")),
+        SnackBar(content: Text("Error: $e")),
       );
+    } finally {
+      setState(() => _isLoading = false);
     }
-  }
-
-  Future<String?> _uploadProfileImage(String uid) async {
-    try {
-      final ref = FirebaseStorage.instance
-          .ref('profile_images/$uid-${DateTime.now().millisecondsSinceEpoch}.jpg');
-
-      UploadTask uploadTask;
-      if (kIsWeb && _webImageData != null) {
-        uploadTask = ref.putData(_webImageData!);
-      } else if (_profileImageFile != null) {
-        uploadTask = ref.putFile(_profileImageFile!);
-      } else {
-        return null;
-      }
-
-      final snapshot = await uploadTask;
-      return await snapshot.ref.getDownloadURL();
-    } catch (e) {
-      print("Upload error: $e");
-      return null;
-    }
-  }
-
-Future<void> _register() async {
-  final connectivityResult = await Connectivity().checkConnectivity();
-  if (connectivityResult == ConnectivityResult.none) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("No internet connection")),
-    );
-    return;
-  }
-
-  if (!_formKey.currentState!.validate()) return;
-
-  if (_role == null) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Please select a role")),
-    );
-    return;
-  }
-
-  if (_passwordController.text != _confirmPasswordController.text) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Passwords do not match")),
-    );
-    return;
-  }
-
-  if (!_agreedToTerms) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("You must agree to the Terms and Conditions")),
-    );
-    return;
-  }
-
-  setState(() => _isLoading = true);
-
-  try {
-    final userCredential = await _auth.createUserWithEmailAndPassword(
-      email: _emailController.text.trim(),
-      password: _passwordController.text.trim(),
-    );
-
-    final uid = userCredential.user!.uid;
-    print("✅ User created: $uid");
-
-    final profileImageUrl = await _uploadProfileImage(uid);
-    print("✅ Profile image uploaded: $profileImageUrl");
-
-    final userData = {
-      'uid': uid,
-      'fullName': _fullNameController.text.trim(),
-      'username': _usernameController.text.trim(),
-      'email': _emailController.text.trim(),
-      'nationalId': _nationalIdController.text.trim(),
-      'phone': _phone,
-      'location': _locationController.text.trim(),
-      'role': _role,
-      'profileImage': profileImageUrl ?? '',
-      'createdAt': Timestamp.now(),
-    };
-
-    try {
-      await _firestore.collection('users').doc(uid).set(userData);
-      print("✅ Firestore document written");
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Registration successful")),
-      );
-
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => _role == 'Donor'
-              ? const DonorDashboard()
-              : const RecipientDashboard(),
-        ),
-      );
-    } catch (firestoreError) {
-      print("❌ Firestore error: $firestoreError");
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Error saving user to Firestore")),
-      );
-    }
-  } catch (e) {
-    print("❌ Registration error: $e");
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("Registration failed: ${e.toString()}")),
-    );
-  } finally {
-    setState(() => _isLoading = false);
-  }
-}
-
-
-  @override
-  void dispose() {
-    _fullNameController.dispose();
-    _usernameController.dispose();
-    _emailController.dispose();
-    _nationalIdController.dispose();
-    _passwordController.dispose();
-    _confirmPasswordController.dispose();
-    _locationController.dispose();
-    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.green.shade50,
       appBar: AppBar(
         title: const Text('Register'),
         backgroundColor: Colors.green,
@@ -224,16 +129,12 @@ Future<void> _register() async {
             child: Column(
               children: [
                 GestureDetector(
-                  onTap: _pickImage,
+                  onTap: () => _pickImage(),
                   child: CircleAvatar(
                     radius: 60,
-                    backgroundColor: Colors.green.shade200,
-                    backgroundImage: _webImageData != null
-                        ? MemoryImage(_webImageData!)
-                        : _profileImageFile != null
-                            ? FileImage(_profileImageFile!)
-                            : null,
-                    child: (_profileImageFile == null && _webImageData == null)
+                    backgroundColor: Colors.green,
+                    backgroundImage: _profileImageFile != null ? FileImage(_profileImageFile!) : null,
+                    child: _profileImageFile == null
                         ? const Icon(Icons.camera_alt, size: 40, color: Colors.white)
                         : null,
                   ),
@@ -245,6 +146,7 @@ Future<void> _register() async {
                   items: const [
                     DropdownMenuItem(value: 'Donor', child: Text('Donor')),
                     DropdownMenuItem(value: 'Recipient', child: Text('Recipient')),
+                    DropdownMenuItem(value: 'Rider', child: Text('Rider')),
                   ],
                   onChanged: (val) => setState(() => _role = val),
                   decoration: const InputDecoration(
@@ -310,27 +212,34 @@ Future<void> _register() async {
                 ),
                 const SizedBox(height: 16),
 
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextFormField(
-                        controller: _locationController,
-                        decoration: const InputDecoration(
-                          labelText: 'Location',
-                          prefixIcon: Icon(Icons.location_on),
-                          border: OutlineInputBorder(),
-                        ),
-                        validator: (val) => val!.isEmpty ? 'Enter location' : null,
-                      ),
+                if (_role == 'Rider') ...[
+                  TextFormField(
+                    controller: _licenseController,
+                    decoration: const InputDecoration(
+                      labelText: 'Driver’s License',
+                      prefixIcon: Icon(Icons.badge),
+                      border: OutlineInputBorder(),
                     ),
-                    const SizedBox(width: 8),
-                    ElevatedButton.icon(
-                      onPressed: _detectLocation,
-                      icon: const Icon(Icons.my_location),
-                      label: const Text("Detect"),
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-                    ),
-                  ],
+                    validator: (val) => val!.isEmpty ? 'Enter license number' : null,
+                  ),
+                  const SizedBox(height: 16),
+
+                  ElevatedButton.icon(
+                    onPressed: () => _pickImage(isIdPhoto: true),
+                    icon: const Icon(Icons.photo_camera_back),
+                    label: const Text("Upload ID Photo"),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+
+                TextFormField(
+                  controller: _locationController,
+                  decoration: const InputDecoration(
+                    labelText: 'Location',
+                    prefixIcon: Icon(Icons.location_on),
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (val) => val!.isEmpty ? 'Enter location' : null,
                 ),
                 const SizedBox(height: 16),
 
@@ -384,6 +293,13 @@ Future<void> _register() async {
                     minimumSize: const Size(double.infinity, 50),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
                   ),
+                ),
+                const SizedBox(height: 12),
+                TextButton(
+                  onPressed: () {
+                    Navigator.pushReplacementNamed(context, '/login');
+                  },
+                  child: const Text("Already have an account? Login"),
                 ),
               ],
             ),

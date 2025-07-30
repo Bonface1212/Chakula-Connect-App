@@ -211,6 +211,6 @@ class _DonorDashboardState extends State<DonorDashboard> {
   }
 
  Widget _buildMapView() {
-  return const MapTab(); // Embed the actual map tracking screen here
+  return const DonorMapTab(claimId: '',); // Embed the actual map tracking screen here
 }
 }

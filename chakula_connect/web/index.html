@@ -1,38 +1,35 @@
 <!DOCTYPE html>
-<html>
-<head>
-  <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+    <meta name="description" content="Connecting food donors with recipients" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
+    <title>Chakula Connect</title>
 
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+    <!-- Favicon and App Icon -->
+    <link rel="icon" type="image/png" href="assets/images/Chakula Connect.png" />
+    <link rel="apple-touch-icon" href="assets/images/Chakula Connect.png" />
 
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
-  -->
-  <base href="$FLUTTER_BASE_HREF">
+    <!-- Manifest (PWA Support) -->
+    <link rel="manifest" href="manifest.json" />
 
-  <meta charset="UTF-8">
-  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-   <meta name="description" content="Connecting food donors with recipients">
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCI_I9I8n03XY-17h-outvh0PVUvieMQdc"></script>
-  <!-- iOS meta tags & icons -->
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="chakula_connect">
-  <link rel="apple-touch-icon" href="/assets/images/Chakula Connect.png">
+    <!-- Google Maps JS API -->
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCI_I9I8n03XY-17h-outvh0PVUvieMQdc&libraries=places"></script>
 
-  <!-- Favicon -->
-  <link rel="icon" type="image/png" href="/assets/images/Chakula Connect.png"/>
-
-  <title>chakula_connect</title>
-  <link rel="manifest" href="manifest.json">
-</head>
-<body>
-  <script src="main.dart.js" type="application/javascript"></script>
-</body>
+    <!-- Flutter Web JS Entrypoint -->
+    <script src="main.dart.js" type="application/javascript"></script>
+  </head>
+  <body>
+    <script>
+      window.flutterWebRenderer = "html";
+    </script>
+    <noscript>
+      <p>Please enable JavaScript to run Chakula Connect.</p>
+    </noscript>
+  </body>
 </html>
