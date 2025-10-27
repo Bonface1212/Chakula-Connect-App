@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+// ignore: depend_on_referenced_packages
 import 'package:uuid/uuid.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 
@@ -114,6 +115,7 @@ final data = {
   'category': _selectedCategory ?? 'Other',
   'imageUrl': imageUrl,
   'donorId': user.uid, 
+  'status': 'Available',
   'createdAt': Timestamp.now(),
 };
 

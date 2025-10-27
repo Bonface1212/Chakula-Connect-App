@@ -1,7 +1,6 @@
 // ignore_for_file: unused_import, use_build_context_synchronously
 
 import 'package:chakula_connect/screens/rider/rider_dashboard.dart';
-import 'package:chakula_connect/screens/rider/rider_home.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -17,8 +16,7 @@ import 'screens/welcome_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/donors/donor_dashboard.dart';
 import 'screens/recipient/recipient_dashboard.dart';
-// ignore: duplicate_import
-import 'screens/rider/rider_home.dart'; // ✅ Rider dashboard
+// ignore: duplicate_import // ✅ Rider dashboard
 // ignore: duplicate_import
 import 'screens/rider/rider_dashboard.dart'; // New rider dashboard with nav
 

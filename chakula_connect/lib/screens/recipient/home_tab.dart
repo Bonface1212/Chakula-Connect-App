@@ -1,4 +1,6 @@
+import 'package:chakula_connect/screens/recipient/donation_detail_screen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 class HomeTab extends StatefulWidget {
@@ -13,6 +15,88 @@ class _HomeTabState extends State<HomeTab> {
   final chakulaOrange = const Color(0xFFFF6A13);
 
   String selectedCategory = 'All';
+  String userId = '';
+  int remainingClaims = 3;
+
+  @override
+  void initState() {
+    super.initState();
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      userId = user.uid;
+      _fetchTodaysClaimCount();
+    }
+  }
+
+  Future<void> _fetchTodaysClaimCount() async {
+    final todayStart = DateTime.now();
+    final startOfDay = DateTime(todayStart.year, todayStart.month, todayStart.day);
+
+    final snapshot = await FirebaseFirestore.instance
+        .collection('claims')
+        .where('userId', isEqualTo: userId)
+        .where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
+        .get();
+
+    setState(() {
+      remainingClaims = 3 - snapshot.docs.length;
+    });
+  }
+
+  Future<void> _claimFood(Map<String, dynamic> post) async {
+    final donationId = post['id'];
+
+    if (remainingClaims <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("⛔ You have reached your daily limit of 3 claims.")),
+      );
+      return;
+    }
+
+    final existing = await FirebaseFirestore.instance
+        .collection('claims')
+        .where('userId', isEqualTo: userId)
+        .where('donationId', isEqualTo: donationId)
+        .get();
+
+    if (existing.docs.isNotEmpty) {
+      // ignore: use_build_context_synchronously
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("⚠️ You've already claimed this item.")),
+      );
+      return;
+    }
+
+    try {
+      await FirebaseFirestore.instance.collection('claims').add({
+        'userId': userId,
+        'donationId': donationId,
+        'foodName': post['foodName'],
+        'imageUrl': post['imageUrl'],
+        'timestamp': Timestamp.now(),
+        'status': 'claimed',
+      });
+
+      await FirebaseFirestore.instance
+          .collection('donations')
+          .doc(donationId)
+          .update({'status': 'claimed'});
+
+      setState(() => remainingClaims--);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text("🎉 Food claimed successfully!"),
+          backgroundColor: chakulaGreen,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error claiming food: $e")),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -22,31 +106,39 @@ class _HomeTabState extends State<HomeTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          /// Logo + Map Button
+          // Logo + Map Button + Claim Info
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Image.asset(
-                  'assets/images/Chakula Connect.png',
-                  height: 60,
-                ),
-                IconButton(
-                  icon: Icon(Icons.map_rounded, color: chakulaGreen, size: 30),
-                  onPressed: () => Navigator.pushNamed(context, '/map'),
-                ),
+                Image.asset('assets/images/Chakula Connect.png', height: 60),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    IconButton(
+                      icon: Icon(Icons.map_rounded, color: chakulaGreen, size: 30),
+                      onPressed: () => Navigator.pushNamed(context, '/map'),
+                    ),
+                    Text(
+                      "Claims left: $remainingClaims",
+                      style: TextStyle(color: chakulaOrange, fontWeight: FontWeight.bold),
+                    )
+                  ],
+                )
               ],
             ),
           ),
 
-          /// Filter Chips
+          // Filter Chips
           StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance.collection('donations').snapshots(),
+            stream: FirebaseFirestore.instance
+                .collection('donations')
+                .where('status', isEqualTo: 'available')
+                .orderBy('createdAt', descending: true)
+                .snapshots(),
             builder: (context, snapshot) {
-              if (!snapshot.hasData) {
-                return const Center(child: CircularProgressIndicator());
-              }
+              if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
 
               final docs = snapshot.data!.docs;
               final categories = {'All', ...docs.map((doc) => doc['category'].toString())};
@@ -57,7 +149,7 @@ class _HomeTabState extends State<HomeTab> {
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   itemCount: categories.length,
-                  separatorBuilder: (_, _) => const SizedBox(width: 10),
+                  separatorBuilder: (_, __) => const SizedBox(width: 10),
                   itemBuilder: (context, index) {
                     final category = categories.elementAt(index);
                     final isSelected = selectedCategory == category;
@@ -80,10 +172,14 @@ class _HomeTabState extends State<HomeTab> {
 
           const SizedBox(height: 10),
 
-          /// Donation Posts List
+          // Food List
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance.collection('donations').snapshots(),
+              stream: FirebaseFirestore.instance
+                  .collection('donations')
+                  .where('status', isEqualTo: 'available')
+                  .orderBy('createdAt', descending: true)
+                  .snapshots(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
@@ -94,9 +190,17 @@ class _HomeTabState extends State<HomeTab> {
                 }
 
                 final all = snapshot.data?.docs ?? [];
-                final filtered = selectedCategory == 'All'
-                    ? all
-                    : all.where((doc) => doc['category'] == selectedCategory).toList();
+                final now = DateTime.now();
+
+                final filtered = all.where((doc) {
+                  final data = doc.data() as Map<String, dynamic>;
+                  final category = data['category'];
+                  final expiryRaw = data['expiryDate'] ?? data['expiry'] ?? '';
+                  final expiry = DateTime.tryParse(expiryRaw);
+                  final isExpired = expiry != null && expiry.isBefore(now);
+                  final matchesCategory = selectedCategory == 'All' || category == selectedCategory;
+                  return matchesCategory && !isExpired;
+                }).toList();
 
                 if (filtered.isEmpty) {
                   return const Center(child: Text("No food available right now."));
@@ -107,8 +211,23 @@ class _HomeTabState extends State<HomeTab> {
                   itemCount: filtered.length,
                   itemBuilder: (context, index) {
                     final post = filtered[index];
-                    return AnimatedContainer(
-                      duration: const Duration(milliseconds: 300),
+                    final data = post.data() as Map<String, dynamic>;
+                    data['id'] = post.id;
+
+                    return GestureDetector(
+  onTap: () {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DonationDetailScreen(data: data),
+      ),
+    );
+  },
+  child: AnimatedContainer(
+    duration: const Duration(milliseconds: 300),
+  
+
+
                       margin: const EdgeInsets.only(bottom: 20),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(24),
@@ -128,14 +247,13 @@ class _HomeTabState extends State<HomeTab> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Image.network(
-                              post['imageUrl'],
+                              data['imageUrl'],
                               height: isLargeScreen ? 250 : 200,
                               width: double.infinity,
                               fit: BoxFit.cover,
-                              errorBuilder: (_, _, ___) => Container(
-                                color: Colors.grey[300],
+                              errorBuilder: (_, __, ___) => Container(
                                 height: isLargeScreen ? 250 : 200,
-                                alignment: Alignment.center,
+                                color: Colors.grey[300],
                                 child: const Icon(Icons.broken_image, size: 48),
                               ),
                             ),
@@ -145,7 +263,7 @@ class _HomeTabState extends State<HomeTab> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    post['category'],
+                                    data['category'],
                                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
                                           fontWeight: FontWeight.bold,
                                           fontSize: 20,
@@ -158,14 +276,14 @@ class _HomeTabState extends State<HomeTab> {
                                       Icon(Icons.location_on, size: 18, color: chakulaGreen),
                                       const SizedBox(width: 6),
                                       Text(
-                                        "${post['location']} • ${post['distance'] ?? '2.5km'}",
+                                        "${data['location'] ?? 'N/A'} • ${data['distance'] ?? '2.5km'}",
                                         style: const TextStyle(color: Colors.black54),
                                       ),
                                       const Spacer(),
                                       Icon(Icons.timer_outlined, size: 18, color: chakulaOrange),
                                       const SizedBox(width: 6),
                                       Text(
-                                        post['expiry'],
+                                        data['expiryDate'] ?? data['expiry'] ?? 'N/A',
                                         style: TextStyle(color: chakulaOrange),
                                       ),
                                     ],
@@ -174,19 +292,11 @@ class _HomeTabState extends State<HomeTab> {
                                   SizedBox(
                                     width: double.infinity,
                                     child: ElevatedButton.icon(
-                                      onPressed: () {
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          SnackBar(
-                                            content: const Text("🎉 Food claimed successfully!"),
-                                            backgroundColor: chakulaGreen,
-                                            behavior: SnackBarBehavior.floating,
-                                          ),
-                                        );
-                                      },
+                                      onPressed: () => _claimFood(data),
                                       style: ElevatedButton.styleFrom(
-                                        padding: const EdgeInsets.symmetric(vertical: 14),
                                         backgroundColor: chakulaOrange,
                                         foregroundColor: Colors.white,
+                                        padding: const EdgeInsets.symmetric(vertical: 14),
                                         shape: RoundedRectangleBorder(
                                           borderRadius: BorderRadius.circular(14),
                                         ),
@@ -201,7 +311,8 @@ class _HomeTabState extends State<HomeTab> {
                           ],
                         ),
                       ),
-                    );
+                      ),
+);
                   },
                 );
               },

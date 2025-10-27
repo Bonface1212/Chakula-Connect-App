@@ -68,6 +68,9 @@ flutter:
   assets:
     - assets/images/chakula connect.png
     - assets/animations/
+    - assets/icons/rider_bike.png  
+    - assets/icons/home_marker.png
+
   fonts:
     - family: Nunito
       fonts:

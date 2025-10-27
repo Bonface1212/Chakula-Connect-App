@@ -1,5 +1,7 @@
-// ignore_for_file: use_build_context_synchronously, unused_field
+// ignore_for_file: use_build_context_synchronously, unused_field, avoid_print
 import 'dart:io';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart'; // for kIsWeb
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -28,8 +30,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
 
+  // Mobile file
   File? _profileImageFile;
   File? _idImageFile;
+
+  // Web bytes
+  Uint8List? _profileImageBytes;
+  Uint8List? _idImageBytes;
+
   String? _role = 'Donor';
   String? _phone;
   bool _isPasswordVisible = false;
@@ -40,20 +48,42 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _pickImage({bool isIdPhoto = false}) async {
     final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
     if (picked != null) {
-      final file = File(picked.path);
-      setState(() {
-        if (isIdPhoto) {
-          _idImageFile = file;
-        } else {
-          _profileImageFile = file;
-        }
-      });
+      if (kIsWeb) {
+        final bytes = await picked.readAsBytes();
+        setState(() {
+          if (isIdPhoto) {
+            _idImageBytes = bytes;
+          } else {
+            _profileImageBytes = bytes;
+          }
+        });
+      } else {
+        setState(() {
+          if (isIdPhoto) {
+            _idImageFile = File(picked.path);
+          } else {
+            _profileImageFile = File(picked.path);
+          }
+        });
+      }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("No image selected")),
+      );
     }
   }
 
+  // Upload for mobile
   Future<String> _uploadToFirebase(File file, String path) async {
     final ref = FirebaseStorage.instance.ref().child(path);
     await ref.putFile(file);
+    return await ref.getDownloadURL();
+  }
+
+  // Upload for web
+  Future<String> _uploadToFirebaseWeb(Uint8List bytes, String path) async {
+    final ref = FirebaseStorage.instance.ref().child(path);
+    await ref.putData(bytes);
     return await ref.getDownloadURL();
   }
 
@@ -65,7 +95,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       );
       return;
     }
-    if (_profileImageFile == null || _idImageFile == null) {
+    if ((kIsWeb && (_profileImageBytes == null || _idImageBytes == null)) ||
+        (!kIsWeb && (_profileImageFile == null || _idImageFile == null))) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Please upload both Profile and ID images")),
       );
@@ -80,23 +111,39 @@ class _RegisterScreenState extends State<RegisterScreen> {
         password: _passwordController.text.trim(),
       );
 
-      String profileUrl = await _uploadToFirebase(_profileImageFile!, "users/${cred.user!.uid}/profile.jpg");
-      String idUrl = await _uploadToFirebase(_idImageFile!, "users/${cred.user!.uid}/id.jpg");
+      String profileUrl;
+      String idUrl;
+      if (kIsWeb) {
+        profileUrl = await _uploadToFirebaseWeb(_profileImageBytes!, "users/${cred.user!.uid}/profile.jpg");
+        idUrl = await _uploadToFirebaseWeb(_idImageBytes!, "users/${cred.user!.uid}/id.jpg");
+      } else {
+        profileUrl = await _uploadToFirebase(_profileImageFile!, "users/${cred.user!.uid}/profile.jpg");
+        idUrl = await _uploadToFirebase(_idImageFile!, "users/${cred.user!.uid}/id.jpg");
+      }
 
-      await FirebaseFirestore.instance.collection('users').doc(cred.user!.uid).set({
-        'uid': cred.user!.uid,
-        'fullName': _fullNameController.text.trim(),
-        'username': _usernameController.text.trim(),
-        'email': _emailController.text.trim(),
-        'phone': _phone,
-        'role': _role,
-        'nationalId': _nationalIdController.text.trim(),
-        'driverLicense': _role == 'Rider' ? _licenseController.text.trim() : null,
-        'location': _locationController.text.trim(),
-        'profileImageUrl': profileUrl,
-        'idImageUrl': idUrl,
-        'createdAt': Timestamp.now(),
-      });
+      try {
+        await FirebaseFirestore.instance.collection('users').doc(cred.user!.uid).set({
+          'uid': cred.user!.uid,
+          'fullName': _fullNameController.text.trim(),
+          'username': _usernameController.text.trim(),
+          'email': _emailController.text.trim(),
+          'phone': _phone,
+          'role': _role,
+          'nationalId': _nationalIdController.text.trim(),
+          'driverLicense': _role == 'Rider' ? _licenseController.text.trim() : null,
+          'location': _locationController.text.trim(),
+          'profileImageUrl': profileUrl,
+          'idImageUrl': idUrl,
+          'createdAt': Timestamp.now(),
+        });
+
+        print("✅ User profile saved successfully!");
+      } on FirebaseException catch (e) {
+        print("❌ Firestore write failed: ${e.message}");
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Firestore error: ${e.message}')),
+        );
+      }
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Registration successful!")),
@@ -128,17 +175,43 @@ class _RegisterScreenState extends State<RegisterScreen> {
             key: _formKey,
             child: Column(
               children: [
+                // Profile Image
                 GestureDetector(
                   onTap: () => _pickImage(),
                   child: CircleAvatar(
                     radius: 60,
                     backgroundColor: Colors.green,
-                    backgroundImage: _profileImageFile != null ? FileImage(_profileImageFile!) : null,
-                    child: _profileImageFile == null
-                        ? const Icon(Icons.camera_alt, size: 40, color: Colors.white)
-                        : null,
+                    child: kIsWeb
+                        ? (_profileImageBytes != null
+                            ? ClipOval(
+                                child: Image.memory(
+                                  _profileImageBytes!,
+                                  width: 120,
+                                  height: 120,
+                                  fit: BoxFit.cover,
+                                ),
+                              )
+                            : const Icon(Icons.camera_alt, size: 40, color: Colors.white))
+                        : (_profileImageFile != null
+                            ? ClipOval(
+                                child: Image.file(
+                                  _profileImageFile!,
+                                  width: 120,
+                                  height: 120,
+                                  fit: BoxFit.cover,
+                                ),
+                              )
+                            : const Icon(Icons.camera_alt, size: 40, color: Colors.white)),
                   ),
                 ),
+                if ((kIsWeb && _profileImageBytes != null) || (!kIsWeb && _profileImageFile != null))
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8.0),
+                    child: Text(
+                      "Profile photo selected ✅",
+                      style: TextStyle(color: Colors.green, fontWeight: FontWeight.w600),
+                    ),
+                  ),
                 const SizedBox(height: 16),
 
                 DropdownButtonFormField<String>(
@@ -227,8 +300,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   ElevatedButton.icon(
                     onPressed: () => _pickImage(isIdPhoto: true),
                     icon: const Icon(Icons.photo_camera_back),
-                    label: const Text("Upload ID Photo"),
+                    label: Text(_idImageBytes != null || _idImageFile != null
+                        ? "ID Photo Selected ✅"
+                        : "Upload ID Photo"),
                   ),
+                  if ((kIsWeb && _idImageBytes != null) || (!kIsWeb && _idImageFile != null))
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8.0),
+                      child: Text(
+                        "ID photo selected ✅",
+                        style: const TextStyle(color: Colors.green, fontWeight: FontWeight.w600),
+                      ),
+                    ),
                   const SizedBox(height: 16),
                 ],
 

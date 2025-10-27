@@ -2,17 +2,44 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:chakula_connect/screens/recipient/claim_detail_screen.dart';
 
 final claimStreamProvider = StreamProvider.autoDispose((ref) {
+  final userId = FirebaseAuth.instance.currentUser?.uid;
+
+  if (userId == null) {
+    return const Stream.empty();
+  }
+
   return FirebaseFirestore.instance
       .collection('claims')
+      .where('recipientId', isEqualTo: userId)
       .orderBy('timestamp', descending: true)
       .snapshots();
 });
 
 class ClaimsTab extends ConsumerWidget {
   const ClaimsTab({super.key});
+
+  bool _isExpired(dynamic expiryDate) {
+    if (expiryDate == null) return false;
+
+    DateTime? expiry;
+    if (expiryDate is Timestamp) {
+      expiry = expiryDate.toDate();
+    } else if (expiryDate is String) {
+      expiry = DateTime.tryParse(expiryDate);
+    }
+
+    if (expiry == null) return false;
+
+    final now = DateTime.now();
+    final expiryDateOnly = DateTime(expiry.year, expiry.month, expiry.day);
+    final todayDateOnly = DateTime(now.year, now.month, now.day);
+
+    return expiryDateOnly.isBefore(todayDateOnly);
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -26,14 +53,19 @@ class ClaimsTab extends ConsumerWidget {
       ),
       body: claimStream.when(
         data: (snapshot) {
-          if (snapshot.docs.isEmpty) {
+          final filteredDocs = snapshot.docs.where((doc) {
+            final data = doc.data();
+            return !_isExpired(data['expiryDate'] ?? data['expiry']);
+          }).toList();
+
+          if (filteredDocs.isEmpty) {
             return const Center(child: Text("No claimed items yet."));
           }
 
           return ListView.builder(
-            itemCount: snapshot.docs.length,
+            itemCount: filteredDocs.length,
             itemBuilder: (context, index) {
-              final doc = snapshot.docs[index];
+              final doc = filteredDocs[index];
               final data = doc.data();
 
               return Card(

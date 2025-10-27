@@ -1,3 +1,5 @@
+// ignore_for_file: use_build_context_synchronously
+
 import 'package:chakula_connect/screens/recipient/recipient_dashboard.dart';
 import 'package:chakula_connect/screens/rider/rider_dashboard.dart';
 import 'package:flutter/material.dart';
@@ -93,6 +95,8 @@ class _LoginScreenState extends State<LoginScreen> {
       switch (role) {
         case 'Donor':
           Navigator.pushReplacement(
+              // ignore: duplicate_ignore
+              // ignore: use_build_context_synchronously
               context, MaterialPageRoute(builder: (_) => const DonorDashboard()));
           break;
         case 'Recipient':
@@ -214,7 +218,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           padding: const EdgeInsets.symmetric(vertical: 14),
                         ),
                         onPressed: _login,
-                        child: const Text("Login", style: TextStyle(fontSize: 16)),
+                        child: const Text("Login", style: TextStyle(fontSize: 16),selectionColor: (Colors.white)),
                       ),
                     ),
               const SizedBox(height: 16),
