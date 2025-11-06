@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+    <meta
+      name="description"
+      content="Connecting food donors with recipients"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+
+    <title>Chakula Connect</title>
+
+    <!-- ✅ Favicon and App Icon -->
+    <link
+      rel="icon"
+      type="image/png"
+      href="assets/images/Chakula Connect.png"
+    />
+    <link
+      rel="apple-touch-icon"
+      href="assets/images/Chakula Connect.png"
+    />
+
+    <!-- ✅ Manifest (PWA Support) -->
+    <link rel="manifest" href="manifest.json" />
+
+    <!-- ✅ Load Google Maps API asynchronously (best practice) -->
+    <script
+      async
+      defer
+      src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCI_I9I8n03XY-17h-outvh0PVUvieMQdc&libraries=places"
+    ></script>
+
+    <!-- ✅ Flutter Web JS loader (loads main.dart.js automatically) -->
+    <script src="flutter.js" defer></script>
+  </head>
+
+  <body>
+    <script>
+      window.addEventListener('load', function () {
+        _flutter.loader.loadEntrypoint({
+          serviceWorker: {
+            serviceWorkerVersion: null,
+          },
+          onEntrypointLoaded: function (engineInitializer) {
+            engineInitializer.initializeEngine().then(function (appRunner) {
+              appRunner.runApp();
+            });
+          },
+        });
+      });
+    </script>
+
+    <noscript>
+      <p>Please enable JavaScript to run Chakula Connect.</p>
+    </noscript>
+  </body>
+</html>
