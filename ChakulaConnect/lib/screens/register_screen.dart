@@ -51,6 +51,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
   LatLng? _selectedLatLng; // Actual coordinates
   String? _selectedAddress; // Human-readable address
 
+  // --- OTP / Phone verification state (added) ---
+  String _verificationId = '';
+  bool _isOTPSent = false;
+  bool _isVerifying = false;
+  bool _isPhoneVerified = false;
+  // ------------------------------------------------
+
   // Image picker
   Future<void> _pickImage({bool isIdPhoto = false}) async {
     final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
@@ -147,7 +154,121 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
+  // --- OTP: send SMS ----
+  Future<void> sendOTP() async {
+    if (_phone == null || _phone!.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Enter a valid phone number first")),
+      );
+      return;
+    }
+
+    setState(() {
+      _isVerifying = true;
+      _isOTPSent = false;
+      _isPhoneVerified = false;
+    });
+
+    try {
+      await FirebaseAuth.instance.verifyPhoneNumber(
+        phoneNumber: _phone!,
+        timeout: const Duration(seconds: 60),
+        verificationCompleted: (PhoneAuthCredential credential) async {
+          // Auto-retrieval or instant validation on some devices
+          // We'll try to sign in then delete the temp phone user to only use verification.
+          try {
+            final uc = await FirebaseAuth.instance.signInWithCredential(credential);
+            // Delete the temporary phone user right away to avoid leaving orphan accounts.
+            await uc.user?.delete();
+            setState(() {
+              _isPhoneVerified = true;
+              _isOTPSent = true;
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text("Phone auto-verified")),
+            );
+          } catch (e) {
+            // ignore errors here; user can still enter code manually
+          } finally {
+            setState(() => _isVerifying = false);
+          }
+        },
+        verificationFailed: (FirebaseAuthException e) {
+          setState(() => _isVerifying = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(e.message ?? "OTP verification failed")),
+          );
+        },
+        codeSent: (String verificationId, int? resendToken) {
+          setState(() {
+            _verificationId = verificationId;
+            _isOTPSent = true;
+            _isVerifying = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("OTP sent")),
+          );
+        },
+        codeAutoRetrievalTimeout: (String verificationId) {
+          _verificationId = verificationId;
+        },
+      );
+    } catch (e) {
+      setState(() => _isVerifying = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error sending OTP: $e")),
+      );
+    }
+  }
+
+  // --- OTP: verify code entered by user ---
+  Future<void> verifyOTP(String smsCode) async {
+    if (_verificationId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("No verification in progress")),
+      );
+      return;
+    }
+
+    setState(() => _isVerifying = true);
+
+    try {
+      final credential = PhoneAuthProvider.credential(
+        verificationId: _verificationId,
+        smsCode: smsCode,
+      );
+
+      // Sign in with the credential to validate the code, then delete the temporary phone user.
+      final uc = await FirebaseAuth.instance.signInWithCredential(credential);
+
+      // Delete temporary phone-only auth user so they don't remain in Firebase Auth.
+      await uc.user?.delete();
+
+      setState(() {
+        _isPhoneVerified = true;
+        _isVerifying = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Phone verified successfully")),
+      );
+    } catch (e) {
+      setState(() => _isVerifying = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Invalid or expired OTP")),
+      );
+    }
+  }
+
   Future<void> _register() async {
+    // Require phone verification before allowing registration
+    if (!_isPhoneVerified) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please verify your phone number first (send and confirm OTP)")),
+      );
+      return;
+    }
+
     if (!_formKey.currentState!.validate()) return;
     if (!_agreedToTerms) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -341,21 +462,122 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   initialCountryCode: 'KE',
                   disableLengthCheck: true,
                   onChanged: (phone) {
-                    String number = phone.number;
-                    if (number.startsWith('0')) number = number.substring(1);
-                    _phone = phone.countryCode + number;
+                    String raw = phone.number;
+
+                    // Remove leading zero (e.g., 07 → 7, 01 → 1)
+                    if (raw.startsWith('0')) {
+                      raw = raw.substring(1);
+                    }
+
+                    // Final stored phone number: +254XXXXXXXXX
+                    _phone = "+254$raw";
+
+                    // If user changed phone after verification, reset verification
+                    if (_isPhoneVerified) {
+                      setState(() {
+                        _isPhoneVerified = false;
+                        _isOTPSent = false;
+                        _verificationId = '';
+                      });
+                    }
                   },
                   validator: (phone) {
-                    if (phone == null || phone.number.isEmpty) return 'Enter phone number';
-                    String number = phone.number.startsWith('0')
-                        ? phone.number.substring(1)
-                        : phone.number;
-                    if (!RegExp(r'^\d{9}$').hasMatch(number)) {
-                      return 'Phone number must be 9 digits (without leading zero)';
+                    if (phone == null || phone.number.isEmpty) {
+                      return 'Enter phone number';
                     }
+
+                    String raw = phone.number;
+
+                    if (raw.startsWith('0')) {
+                      raw = raw.substring(1); // remove leading zero
+                    }
+
+                    // Accept: 7XXXXXXXX or 1XXXXXXXX (Safaricom/Airtel/Telkom new prefixes)
+                    if (!RegExp(r'^(7|1)\d{8}$').hasMatch(raw)) {
+                      return 'Format must be +2547XXXXXXXX or +2541XXXXXXXX';
+                    }
+
                     return null;
                   },
                 ),
+
+                const SizedBox(height: 8),
+
+                // Send OTP / OTP input UI (added)
+                if (!_isOTPSent) ...[
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          icon: _isVerifying ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.send),
+                          label: Text(_isVerifying ? "Sending..." : "Send OTP"),
+                          onPressed: _isVerifying
+                              ? null
+                              : () {
+                            // validate phone input before sending OTP
+                            final valid = _formKey.currentState?.validate() ?? false;
+                            if (!valid) {
+                              // show inline error (the IntlPhoneField validator will show)
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text("Please enter a valid phone number")),
+                              );
+                              return;
+                            }
+                            sendOTP();
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green,
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size(double.infinity, 44),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ] else ...[
+                  const SizedBox(height: 8),
+                  TextField(
+                    keyboardType: TextInputType.number,
+                    maxLength: 6,
+                    decoration: const InputDecoration(
+                      labelText: "Enter OTP",
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: (value) {
+                      if (value.length == 6) {
+                        verifyOTP(value);
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: _isVerifying ? null : () {
+                            // manual verify will be handled by the onChanged above (auto) or user can press this after entering code
+                          },
+                          child: _isVerifying
+                              ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                              : Text(_isPhoneVerified ? "Verified ✓" : "Verify OTP"),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _isPhoneVerified ? Colors.grey : Colors.green,
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size(double.infinity, 44),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      TextButton(
+                        onPressed: _isVerifying ? null : sendOTP,
+                        child: const Text("Resend"),
+                      )
+                    ],
+                  ),
+                ],
+
                 const SizedBox(height: 16),
 
                 TextFormField(
